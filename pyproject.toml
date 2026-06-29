@@ -1,0 +1,9 @@
+[project]
+name = "bo-vpn-agent"
+version = "0.1.0"
+description = "BO/VPN diagnostic worker MVP"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+bo-vpn-agent = "bo_vpn_agent.__main__:main"
