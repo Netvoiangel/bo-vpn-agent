@@ -15,13 +15,14 @@ Implemented:
 - service-token auth
 - `dry_run` runner
 - `existing_container` runner boundary
+- `existing_container` runner-daemon executor for `vehicle_reachability` and `basic_status`
 - `job_container` boundary placeholder
 - audit redaction tests
 - runner-daemon API skeleton
 
 Not implemented yet:
 
-- real host-side vpn runner-daemon execution
+- production-ready host-side runner-daemon deployment and cleanup
 - real `job_container` Docker execution
 - persistent task storage
 - production artifact file storage
@@ -100,6 +101,13 @@ BO_VPN_RUNNER_URL=http://127.0.0.1:8091
 BO_VPN_TASK_TIMEOUT_SEC=120
 BO_VPN_ARTIFACT_TTL_HOURS=24
 BO_VPN_AUDIT_LOG_PATH=./logs/audit.jsonl
+BO_VPN_EXISTING_CONTAINER_NAME=univpn-service
+BO_VPN_NSENTER_BIN=/usr/bin/nsenter
+BO_VPN_DOCKER_BIN=/usr/bin/docker
+BO_VPN_SSH_BIN=/usr/bin/ssh
+BO_VPN_SSH_KEY_PATH=/home/timur/univpn/rsa.key
+BO_VPN_DEFAULT_SSH_USER=root
+BO_VPN_NSENTER_TIMEOUT_SEC=8
 ```
 
 ## Run locally

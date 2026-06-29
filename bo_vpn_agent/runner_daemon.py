@@ -10,8 +10,10 @@ from typing import Any, Mapping
 from urllib.parse import urlparse
 
 from .artifacts import ArtifactStore
+from .command_exec import CommandExecutor
 from .config import RunnerDaemonConfig
 from .errors import ValidationError, WorkerError
+from .existing_container_executor import ExistingContainerExecutor
 from .models import TASK_STATES, TERMINAL_STATES, Task, Vehicle, VpnCredentials
 from .runner import RunnerFailure, create_runner
 from .security import check_bearer
@@ -63,9 +65,10 @@ class RunnerJob:
 
 
 class RunnerDaemonService:
-    def __init__(self, config: RunnerDaemonConfig) -> None:
+    def __init__(self, config: RunnerDaemonConfig, command_executor: CommandExecutor | None = None) -> None:
         self.config = config
         self.artifact_store = ArtifactStore(config.artifact_dir, config.artifact_ttl_hours, config.max_artifact_bytes)
+        self.command_executor = command_executor
         self.jobs: dict[str, RunnerJob] = {}
         self.lock = threading.RLock()
 
@@ -131,7 +134,15 @@ class RunnerDaemonService:
     def _execute_job(self, job_id: str) -> None:
         with self.lock:
             job = self.jobs[job_id]
-        runner = create_runner(job.task.runner_mode, self.artifact_store)
+        runner = None
+        existing_container_executor = None
+        if job.task.runner_mode == "existing_container":
+            existing_container_executor = ExistingContainerExecutor(
+                config=self.config,
+                command_executor=self.command_executor or ExistingContainerExecutor.from_config(self.config).command_executor,
+            )
+        else:
+            runner = create_runner(job.task.runner_mode, self.artifact_store)
 
         def set_state(state: str, message: str) -> None:
             with self.lock:
@@ -146,7 +157,11 @@ class RunnerDaemonService:
 
             def run_runner() -> None:
                 try:
-                    result_holder["result"] = runner.run(job.task, job.vpn, set_state)
+                    if existing_container_executor is not None:
+                        set_state("starting_vpn", "Поиск existing UniVPN container")
+                        result_holder["result"] = existing_container_executor.run(job.task)
+                    elif runner is not None:
+                        result_holder["result"] = runner.run(job.task, job.vpn, set_state)
                 except BaseException as exc:  # noqa: BLE001 - normalize below
                     failure_holder["error"] = exc
 

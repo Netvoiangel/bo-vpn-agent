@@ -49,6 +49,13 @@ class RunnerDaemonConfig:
     host: str = "127.0.0.1"
     port: int = 8091
     auth_token: str | None = None
+    existing_container_name: str = "univpn-service"
+    nsenter_bin: str = "/usr/bin/nsenter"
+    docker_bin: str = "/usr/bin/docker"
+    ssh_bin: str = "/usr/bin/ssh"
+    ssh_key_path: Path = Path("/home/timur/univpn/rsa.key")
+    default_ssh_user: str = "root"
+    nsenter_timeout_sec: int = 8
     artifact_dir: Path = Path("var/runner-artifacts")
     artifact_ttl_hours: int = 24
     max_artifact_bytes: int = 10 * 1024 * 1024
@@ -59,6 +66,13 @@ class RunnerDaemonConfig:
             host=os.getenv("BO_VPN_RUNNER_HOST", "127.0.0.1"),
             port=int(os.getenv("BO_VPN_RUNNER_PORT", "8091")),
             auth_token=os.getenv("BO_VPN_RUNNER_AUTH_TOKEN"),
+            existing_container_name=os.getenv("BO_VPN_EXISTING_CONTAINER_NAME", "univpn-service"),
+            nsenter_bin=os.getenv("BO_VPN_NSENTER_BIN", "/usr/bin/nsenter"),
+            docker_bin=os.getenv("BO_VPN_DOCKER_BIN", "/usr/bin/docker"),
+            ssh_bin=os.getenv("BO_VPN_SSH_BIN", "/usr/bin/ssh"),
+            ssh_key_path=Path(os.getenv("BO_VPN_SSH_KEY_PATH", "/home/timur/univpn/rsa.key")),
+            default_ssh_user=os.getenv("BO_VPN_DEFAULT_SSH_USER", "root"),
+            nsenter_timeout_sec=int(os.getenv("BO_VPN_NSENTER_TIMEOUT_SEC", "8")),
             artifact_dir=Path(os.getenv("BO_VPN_RUNNER_ARTIFACT_DIR", "var/runner-artifacts")),
             artifact_ttl_hours=int(os.getenv("BO_VPN_ARTIFACT_TTL_HOURS", "24")),
             max_artifact_bytes=int(os.getenv("BO_VPN_MAX_ARTIFACT_BYTES", str(10 * 1024 * 1024))),
