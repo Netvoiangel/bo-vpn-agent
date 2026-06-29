@@ -7,3 +7,4 @@ dependencies = []
 
 [project.scripts]
 bo-vpn-agent = "bo_vpn_agent.__main__:main"
+bo-vpn-runner-daemon = "bo_vpn_agent.runner_daemon_main:main"

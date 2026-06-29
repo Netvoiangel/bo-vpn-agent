@@ -46,7 +46,6 @@ class WorkerService:
     def __init__(self, config: WorkerConfig) -> None:
         self.config = config
         self.artifact_store = ArtifactStore(config.artifact_dir, config.artifact_ttl_hours, config.max_artifact_bytes)
-        self.runner = create_runner(config.runner_mode, self.artifact_store)
         self.audit = AuditLogger(config.audit_log_path)
         self.rate_limiter = RateLimiter(config.global_create_limit_per_minute, config.user_create_limit_per_minute)
         self.lock = threading.RLock()
@@ -82,9 +81,10 @@ class WorkerService:
             self.tasks_by_id[task.task_id] = task
             self.tasks_by_request_id[task.request_id] = task
             self.secrets_by_task_id[task.task_id] = vpn
+            response = task.to_create_response(created=True)
             thread = threading.Thread(target=self._execute_task, args=(task.task_id,), daemon=True)
             thread.start()
-            return 201, task.to_create_response(created=True)
+            return 201, response
 
     def get_task(self, task_id: str) -> dict[str, object]:
         with self.lock:
@@ -126,6 +126,7 @@ class WorkerService:
         if timeout_sec <= 0:
             raise ValidationError("timeout_sec должен быть положительным")
 
+        runner_mode = str(payload.get("runner_mode", self.config.runner_mode))
         task = Task(
             task_id=str(uuid.uuid4()),
             request_id=self._require_str(payload, "request_id"),
@@ -136,7 +137,7 @@ class WorkerService:
             params=params,
             timeout_sec=timeout_sec,
             request_fingerprint=fingerprint,
-            runner_mode=self.config.runner_mode,
+            runner_mode=runner_mode,
             risk=operation.risk,
             state_changing=operation.state_changing,
         )
@@ -150,13 +151,14 @@ class WorkerService:
                 vpn = self.secrets_by_task_id.get(task_id)
             if vpn is None:
                 raise RunnerFailure("vpn_client_error", "VPN credentials отсутствуют")
+            runner = create_runner(task.runner_mode, self.artifact_store, self.config.runner_url, self.config.runner_auth_token)
 
             result_holder: dict[str, Any] = {}
             failure_holder: dict[str, Any] = {}
 
             def run_runner() -> None:
                 try:
-                    result_holder["result"] = self.runner.run(task, vpn, lambda state, msg: self._set_state(task_id, state, msg))
+                    result_holder["result"] = runner.run(task, vpn, lambda state, msg: self._set_state(task_id, state, msg))
                 except BaseException as exc:  # noqa: BLE001 - copied into main worker thread
                     failure_holder["error"] = exc
 

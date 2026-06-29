@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from bo_vpn_agent.api import validate_service_headers
-from bo_vpn_agent.config import WorkerConfig
+from bo_vpn_agent.config import RunnerDaemonConfig, WorkerConfig
+from bo_vpn_agent.runner_daemon import RunnerDaemonService
 from bo_vpn_agent.service import WorkerService
 
 
@@ -45,6 +47,29 @@ def wait_for_terminal(service: WorkerService, task_id: str) -> dict[str, object]
 
 
 class WorkerServiceTests(unittest.TestCase):
+    def test_worker_config_reads_current_env_names(self) -> None:
+        keys = {
+            "BO_VPN_WORKER_AUTH_TOKEN": "token-from-env",
+            "BO_VPN_DEFAULT_RUNNER_MODE": "existing_container",
+            "BO_VPN_RUNNER_URL": "http://127.0.0.1:8091",
+            "BO_VPN_AUDIT_LOG_PATH": "logs/audit.jsonl",
+        }
+        previous = {key: os.environ.get(key) for key in keys}
+        try:
+            os.environ.update(keys)
+            config = WorkerConfig.from_env()
+        finally:
+            for key, value in previous.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
+        self.assertEqual(config.service_token, "token-from-env")
+        self.assertEqual(config.runner_mode, "existing_container")
+        self.assertEqual(config.runner_url, "http://127.0.0.1:8091")
+        self.assertEqual(config.audit_log_path, Path("logs/audit.jsonl"))
+
     def test_capabilities_only_contains_mvp_operations(self) -> None:
         with TemporaryDirectory() as raw_tmp:
             service = WorkerService(make_config(Path(raw_tmp)))
@@ -72,6 +97,62 @@ class WorkerServiceTests(unittest.TestCase):
             self.assertIs(result["ok"], True)
             self.assertNotIn("secret-password", json.dumps(result, ensure_ascii=False))
             self.assertEqual(service.secrets_by_task_id, {})
+
+    def test_task_response_contract(self) -> None:
+        with TemporaryDirectory() as raw_tmp:
+            service = WorkerService(make_config(Path(raw_tmp)))
+
+            status, created = service.create_task(task_payload(operation="vehicle_reachability"))
+            result = wait_for_terminal(service, created["task_id"])
+
+            self.assertEqual(status, 201)
+            self.assertEqual(set(created), {"ok", "task_id", "request_id", "state"})
+            self.assertIs(created["ok"], True)
+            self.assertEqual(created["request_id"], "req-1")
+            self.assertEqual(created["state"], "created")
+
+            for field in ("ok", "task_id", "request_id", "state", "operation", "summary", "data", "warnings", "duration_sec"):
+                self.assertIn(field, result)
+            self.assertIs(result["ok"], True)
+            self.assertEqual(result["state"], "finished")
+            self.assertEqual(result["operation"], "vehicle_reachability")
+            self.assertIsInstance(result["data"], dict)
+            self.assertIsInstance(result["warnings"], list)
+            self.assertIsInstance(result["duration_sec"], int)
+
+    def test_job_container_returns_normalized_error_until_daemon_connected(self) -> None:
+        with TemporaryDirectory() as raw_tmp:
+            service = WorkerService(make_config(Path(raw_tmp)))
+            payload = task_payload("job-container-placeholder-test", "vehicle_reachability")
+            payload["runner_mode"] = "job_container"
+
+            status, created = service.create_task(payload)
+            result = wait_for_terminal(service, created["task_id"])
+
+            self.assertEqual(status, 201)
+            self.assertEqual(result["state"], "failed")
+            self.assertEqual(result["error_code"], "vpn_client_error")
+            self.assertNotIn("secret-password", json.dumps(result, ensure_ascii=False))
+
+    def test_error_response_redacts_validation_request_secrets(self) -> None:
+        with TemporaryDirectory() as raw_tmp:
+            service = WorkerService(make_config(Path(raw_tmp)))
+            payload = task_payload("bad-vpn-mode")
+            payload["vpn"] = {
+                "mode": "stored_ref",
+                "username": "real.user@example.com",
+                "password": "RealPassword123",
+            }
+
+            with self.assertRaises(Exception) as raised:
+                service.create_task(payload)
+
+            body = json.dumps(raised.exception.to_response(), ensure_ascii=False)
+            self.assertEqual(getattr(raised.exception, "status"), 400)
+            self.assertNotIn("RealPassword123", body)
+            self.assertNotIn("real.user@example.com", body)
+            self.assertNotIn("RealPassword123", str(raised.exception))
+            self.assertFalse((Path(raw_tmp) / "audit.log").exists())
 
     def test_request_id_conflict(self) -> None:
         with TemporaryDirectory() as raw_tmp:
@@ -128,6 +209,40 @@ class WorkerServiceTests(unittest.TestCase):
             validate_service_headers({"Authorization": "Bearer test-token"}, "test-token")
         self.assertEqual(getattr(no_request_id.exception, "status"), 400)
         self.assertEqual(getattr(no_request_id.exception, "error_code"), "invalid_request")
+
+    def test_runner_daemon_skeleton_contract(self) -> None:
+        with TemporaryDirectory() as raw_tmp:
+            service = RunnerDaemonService(
+                RunnerDaemonConfig(
+                    artifact_dir=Path(raw_tmp) / "runner-artifacts",
+                    artifact_ttl_hours=24,
+                )
+            )
+            status, created = service.create_job(
+                {
+                    "request_id": "runner-job-1",
+                    "runner_mode": "dry_run",
+                    "vehicle": {"number": "6968", "ip": "172.26.130.165"},
+                    "vpn": {"mode": "inline_once", "username": "demo", "password": "secret"},
+                    "operation": "vehicle_reachability",
+                    "params": {},
+                    "timeout_sec": 5,
+                }
+            )
+
+            for _ in range(200):
+                result = service.get_job(created["job_id"])
+                if result["state"] in {"finished", "failed", "timeout"}:
+                    break
+                time.sleep(0.01)
+            else:
+                raise AssertionError("runner job did not finish")
+
+            self.assertEqual(status, 201)
+            self.assertEqual(created["request_id"], "runner-job-1")
+            self.assertEqual(result["state"], "finished")
+            self.assertEqual(result["operation"], "vehicle_reachability")
+            self.assertNotIn("secret", json.dumps(result, ensure_ascii=False))
 
 
 if __name__ == "__main__":

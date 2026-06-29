@@ -4,6 +4,31 @@ BO/VPN diagnostic worker MVP for remote read-only diagnostics through UniVPN.
 
 The worker is intentionally separated from the Telegram bot. The bot owns UI, vehicle lookup and user interaction; this service owns task lifecycle, service authorization, idempotency, operation registry, audit metadata and the runner boundary.
 
+## Current implementation status
+
+Implemented:
+
+- Worker API
+- In-memory task lifecycle
+- Idempotency by `request_id`
+- MVP capabilities
+- service-token auth
+- `dry_run` runner
+- `existing_container` runner boundary
+- `job_container` boundary placeholder
+- audit redaction tests
+- runner-daemon API skeleton
+
+Not implemented yet:
+
+- real host-side vpn runner-daemon execution
+- real `job_container` Docker execution
+- persistent task storage
+- production artifact file storage
+- real UniVPN connection lifecycle
+
+Current summary: implemented MVP worker control plane; partially implemented runner boundary and runner modes; pending real host-side runner-daemon and UniVPN/job container execution.
+
 ## MVP API
 
 Implemented endpoints:
@@ -20,7 +45,7 @@ Authorization: Bearer <BOT_TO_WORKER_SERVICE_TOKEN>
 X-Request-Id: <uuid>
 ```
 
-Default local token is `dev-token`. Set `BOT_TO_WORKER_SERVICE_TOKEN` in real deployments.
+Default local token is `dev-token`. Set `BO_VPN_WORKER_AUTH_TOKEN` in real deployments.
 
 ## Operations
 
@@ -35,7 +60,7 @@ MVP capabilities include only read-only operations:
 
 ## Runner modes
 
-Set `BO_VPN_RUNNER_MODE`:
+Set `BO_VPN_DEFAULT_RUNNER_MODE`:
 
 - `dry_run` - default, no UniVPN connection, useful for bot integration and API checks.
 - `existing_container` - staging/debug mode for execution from an existing VPN network namespace.
@@ -43,10 +68,50 @@ Set `BO_VPN_RUNNER_MODE`:
 
 The worker does not mount or use the Docker socket directly.
 
+When `BO_VPN_RUNNER_URL` is set, the worker sends jobs to the runner-daemon API instead of executing the local runner placeholder directly.
+
+Runner-daemon MVP API:
+
+- `GET /health`
+- `POST /jobs`
+- `GET /jobs/{job_id}`
+- `POST /jobs/{job_id}/cancel`
+
+Example internal runner request:
+
+```json
+{
+  "request_id": "uuid",
+  "runner_mode": "existing_container",
+  "vehicle": {"number": "6968", "ip": "172.26.130.165"},
+  "vpn": {"mode": "inline_once", "username": "user", "password": "password"},
+  "operation": "vehicle_reachability",
+  "params": {},
+  "timeout_sec": 120
+}
+```
+
+Useful env variables:
+
+```env
+BO_VPN_WORKER_AUTH_TOKEN=dev-token
+BO_VPN_DEFAULT_RUNNER_MODE=dry_run
+BO_VPN_RUNNER_URL=http://127.0.0.1:8091
+BO_VPN_TASK_TIMEOUT_SEC=120
+BO_VPN_ARTIFACT_TTL_HOURS=24
+BO_VPN_AUDIT_LOG_PATH=./logs/audit.jsonl
+```
+
 ## Run locally
 
 ```bash
 python -m bo_vpn_agent --host 127.0.0.1 --port 8080
+```
+
+Run the runner-daemon skeleton:
+
+```bash
+bo-vpn-runner-daemon --host 127.0.0.1 --port 8091
 ```
 
 Healthcheck:
