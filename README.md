@@ -4,6 +4,8 @@ BO/VPN diagnostic worker MVP for remote read-only diagnostics through UniVPN.
 
 The worker is intentionally separated from the Telegram bot. The bot owns UI, vehicle lookup and user interaction; this service owns task lifecycle, service authorization, idempotency, operation registry, audit metadata and the runner boundary.
 
+Current detailed implementation status is tracked in [docs/technical_spec_status.md](docs/technical_spec_status.md).
+
 ## Current implementation status
 
 Implemented:
