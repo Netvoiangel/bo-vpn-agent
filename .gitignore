@@ -6,3 +6,8 @@ __pycache__/
 var/
 config/*
 !config/.gitkeep
+.venv/
+bo_vpn_agent.egg-info/
+logs/
+!logs/.gitkeep
+*.egg-info/
