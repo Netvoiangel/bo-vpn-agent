@@ -11,6 +11,7 @@ class WorkerConfig:
     runner_mode: str = "dry_run"
     runner_url: str | None = None
     runner_auth_token: str | None = None
+    vehicle_inventory_path: Path | None = None
     host: str = "127.0.0.1"
     port: int = 8080
     audit_log_path: Path = Path("var/audit.log")
@@ -32,6 +33,9 @@ class WorkerConfig:
             runner_mode=runner_mode,
             runner_url=os.getenv("BO_VPN_RUNNER_URL"),
             runner_auth_token=os.getenv("BO_VPN_RUNNER_AUTH_TOKEN"),
+            vehicle_inventory_path=Path(os.environ["BO_VPN_VEHICLE_INVENTORY_PATH"])
+            if os.getenv("BO_VPN_VEHICLE_INVENTORY_PATH")
+            else None,
             host=os.getenv("BO_VPN_WORKER_HOST", "127.0.0.1"),
             port=int(os.getenv("BO_VPN_WORKER_PORT", "8080")),
             audit_log_path=Path(audit_log_path),

@@ -4,7 +4,7 @@ import json
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Mapping
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from .config import WorkerConfig
 from .errors import WorkerError
@@ -28,7 +28,8 @@ def make_handler(service: WorkerService) -> type[BaseHTTPRequestHandler]:
             return
 
         def do_GET(self) -> None:  # noqa: N802
-            path = urlparse(self.path).path
+            parsed = urlparse(self.path)
+            path = parsed.path
             try:
                 if path == "/health":
                     self._send_json(HTTPStatus.OK, service.health())
@@ -36,6 +37,10 @@ def make_handler(service: WorkerService) -> type[BaseHTTPRequestHandler]:
                 self._require_service_auth()
                 if path == "/capabilities":
                     self._send_json(HTTPStatus.OK, service.capabilities())
+                    return
+                if path == "/vehicles/resolve":
+                    query = parse_qs(parsed.query).get("query", [""])[0]
+                    self._send_json(HTTPStatus.OK, service.resolve_vehicle(query))
                     return
                 if path.startswith("/tasks/"):
                     task_id = path.removeprefix("/tasks/")

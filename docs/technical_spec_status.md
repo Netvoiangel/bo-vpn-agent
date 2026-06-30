@@ -39,6 +39,7 @@ basic_status: OK
 | Бот остаётся UI-слоем | Частично | В коде worker это учтено, но интеграции с реальным ботом пока нет. |
 | Worker отвечает за диагностику и структурированный результат | Сделано частично | `vehicle_reachability` и `basic_status` возвращают структурированный результат. |
 | Не смешивать bot/VPN/SSH/browser logic | Сделано | Worker и runner разделены. Docker socket в worker не монтируется. |
+| File-based inventory номер ТС -> IP | Сделано частично | Стендовое MVP-решение внутри worker-а; позже заменить на внешний inventory service или bot-side resolver. |
 
 Вывод: архитектурное разделение соблюдено.
 
@@ -87,6 +88,8 @@ basic_status: OK
 | Idempotency по `request_id` | Сделано |
 | Контрактные тесты API | Сделано |
 | Docker packaging worker-а | Сделано |
+| `GET /vehicles/resolve` | Сделано |
+| File-based CSV inventory | Сделано частично |
 
 Вывод: API-слой MVP в хорошем состоянии.
 
@@ -280,6 +283,8 @@ basic_status: OK
 15. Audit redaction.
 16. Command output limit.
 17. Контрактные и mock-based тесты.
+18. File-based CSV inventory для разрешения номера ТС в IP.
+19. Endpoint `GET /vehicles/resolve`.
 ```
 
 ## 16. Что осталось до честного стендового MVP
@@ -306,7 +311,7 @@ basic_status: OK
 6. Artifact storage и download API.
 7. Persistent storage задач/idempotency.
 8. Интеграция с Telegram-ботом.
-9. Справочник номер ТС -> IP.
+9. Production-источник номер ТС -> IP: внешний inventory service или bot-side resolver вместо file-based MVP.
 10. Роли и политика доступа к конкретным ТС.
 11. Защита runner API.
 ```

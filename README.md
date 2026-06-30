@@ -100,6 +100,7 @@ Useful env variables:
 BO_VPN_WORKER_AUTH_TOKEN=dev-token
 BO_VPN_DEFAULT_RUNNER_MODE=dry_run
 BO_VPN_RUNNER_URL=http://127.0.0.1:8091
+BO_VPN_VEHICLE_INVENTORY_PATH=/app/config/vehicles.csv
 BO_VPN_TASK_TIMEOUT_SEC=120
 BO_VPN_ARTIFACT_TTL_HOURS=24
 BO_VPN_AUDIT_LOG_PATH=./logs/audit.jsonl
@@ -122,6 +123,55 @@ Before any `existing_container` operation, runner-daemon checks the active UniVP
 - `nsenter -t <PID> -n ip route`
 
 Preflight succeeds only when `cnem_vnic` exists and route `172.26.0.0/15` is present. Missing container, missing interface or missing VPN route returns `vpn_client_error`; after successful preflight, closed `22/443/80` on the vehicle returns `vehicle_unreachable`.
+
+## Vehicle Inventory
+
+For the stand MVP, worker can resolve a vehicle IP from a local read-only CSV inventory. This is a simple file-based resolver for about 150 vehicles; later it can be replaced by an external inventory service or bot-side resolver. Access policy for a user and a concrete vehicle is still outside the worker and belongs to the bot or external auth layer.
+
+Set the file path:
+
+```env
+BO_VPN_VEHICLE_INVENTORY_PATH=/app/config/vehicles.csv
+```
+
+CSV format:
+
+```csv
+garage_number,vehicle_id,plate,ip,mac,model,branch,updated_at,comment
+1001,81001001,A 001 AA 77,192.0.2.10,00:11:22:33:44:55,Example Bus,Example Branch,2026-06-30T07:00:00+03:00,Synthetic example
+```
+
+`ip` is required. At least one identifier must be present: `garage_number`, `vehicle_id` or `plate`. Other fields are optional. Plates are matched exactly after whitespace normalization; fuzzy matching is intentionally not implemented.
+
+Resolve a vehicle without starting diagnostics:
+
+```bash
+curl -sS 'http://127.0.0.1:8000/vehicles/resolve?query=6217' \
+  -H 'Authorization: Bearer dev-token' \
+  -H 'X-Request-Id: resolve-6217-001'
+```
+
+Create a task without `vehicle.ip`:
+
+```bash
+curl -sS -X POST http://127.0.0.1:8000/tasks \
+  -H 'Authorization: Bearer dev-token' \
+  -H 'Content-Type: application/json' \
+  -H 'X-Request-Id: smoke-inventory-reachability-6217-001' \
+  -d '{
+    "request_id": "smoke-inventory-reachability-6217-001",
+    "telegram_user_id": 123456,
+    "user_role": "engineer",
+    "vehicle": {"number": "6217"},
+    "vpn": {"mode": "inline_once", "username": "smoke-user", "password": "smoke-password"},
+    "operation": "vehicle_reachability",
+    "params": {},
+    "runner_mode": "existing_container",
+    "timeout_sec": 60
+  }'
+```
+
+Do not commit real vehicle inventory files with internal IP addresses. The repository includes only [examples/vehicles.csv](examples/vehicles.csv) with synthetic data; local files under `config/` are ignored except `config/.gitkeep`.
 
 ## Run locally
 

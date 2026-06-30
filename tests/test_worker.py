@@ -13,6 +13,7 @@ from bo_vpn_agent.command_exec import CommandResult, SubprocessCommandExecutor
 from bo_vpn_agent.config import RunnerDaemonConfig, WorkerConfig
 from bo_vpn_agent.runner_daemon import RunnerDaemonService
 from bo_vpn_agent.service import WorkerService
+from bo_vpn_agent.vehicle_inventory import VehicleInventory
 
 
 def make_config(tmp_path: Path, runner_mode: str = "dry_run") -> WorkerConfig:
@@ -24,6 +25,12 @@ def make_config(tmp_path: Path, runner_mode: str = "dry_run") -> WorkerConfig:
         global_create_limit_per_minute=100,
         user_create_limit_per_minute=100,
     )
+
+
+def make_config_with_inventory(tmp_path: Path, inventory_path: Path, runner_mode: str = "dry_run") -> WorkerConfig:
+    config = make_config(tmp_path, runner_mode)
+    config.vehicle_inventory_path = inventory_path
+    return config
 
 
 def task_payload(request_id: str = "req-1", operation: str = "basic_status") -> dict[str, object]:
@@ -73,6 +80,32 @@ def command_result(stdout: str = "", stderr: str = "", returncode: int = 0, time
     return CommandResult(args=(), returncode=returncode, stdout=stdout, stderr=stderr, timed_out=timed_out)
 
 
+def write_inventory(tmp_path: Path, rows: list[dict[str, str]]) -> Path:
+    path = tmp_path / "vehicles.csv"
+    headers = ["garage_number", "vehicle_id", "plate", "ip", "mac", "model", "branch", "updated_at", "comment"]
+    lines = [",".join(headers)]
+    for row in rows:
+        lines.append(",".join(row.get(header, "") for header in headers))
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+def inventory_row(**overrides: str) -> dict[str, str]:
+    row = {
+        "garage_number": "6217",
+        "vehicle_id": "81006217",
+        "plate": "Р 022 КС 198",
+        "ip": "172.26.129.119",
+        "mac": "c4:00:ad:77:50:d3",
+        "model": "ВЛБ 28с",
+        "branch": "Екатерининский Вест-Сервис",
+        "updated_at": "2026-06-30T07:00:00+03:00",
+        "comment": "PA-01",
+    }
+    row.update(overrides)
+    return row
+
+
 class WorkerServiceTests(unittest.TestCase):
     def test_subprocess_command_executor_limits_output(self) -> None:
         executor = SubprocessCommandExecutor(max_output_bytes=10)
@@ -89,6 +122,7 @@ class WorkerServiceTests(unittest.TestCase):
             "BO_VPN_DEFAULT_RUNNER_MODE": "existing_container",
             "BO_VPN_RUNNER_URL": "http://127.0.0.1:8091",
             "BO_VPN_AUDIT_LOG_PATH": "logs/audit.jsonl",
+            "BO_VPN_VEHICLE_INVENTORY_PATH": "config/vehicles.csv",
         }
         previous = {key: os.environ.get(key) for key in keys}
         try:
@@ -105,6 +139,88 @@ class WorkerServiceTests(unittest.TestCase):
         self.assertEqual(config.runner_mode, "existing_container")
         self.assertEqual(config.runner_url, "http://127.0.0.1:8091")
         self.assertEqual(config.audit_log_path, Path("logs/audit.jsonl"))
+        self.assertEqual(config.vehicle_inventory_path, Path("config/vehicles.csv"))
+
+    def test_vehicle_inventory_loads_valid_csv(self) -> None:
+        with TemporaryDirectory() as raw_tmp:
+            path = write_inventory(Path(raw_tmp), [inventory_row()])
+
+            record = VehicleInventory(path).resolve_query("6217")
+
+            self.assertEqual(record.garage_number, "6217")
+            self.assertEqual(record.vehicle_id, "81006217")
+            self.assertEqual(record.ip, "172.26.129.119")
+
+    def test_vehicle_inventory_resolves_by_garage_number(self) -> None:
+        with TemporaryDirectory() as raw_tmp:
+            path = write_inventory(Path(raw_tmp), [inventory_row()])
+
+            record = VehicleInventory(path).resolve_query("6217")
+
+            self.assertEqual(record.ip, "172.26.129.119")
+
+    def test_vehicle_inventory_resolves_by_vehicle_id(self) -> None:
+        with TemporaryDirectory() as raw_tmp:
+            path = write_inventory(Path(raw_tmp), [inventory_row()])
+
+            record = VehicleInventory(path).resolve_query("81006217")
+
+            self.assertEqual(record.garage_number, "6217")
+
+    def test_vehicle_inventory_resolves_by_plate_with_normalized_spaces(self) -> None:
+        with TemporaryDirectory() as raw_tmp:
+            path = write_inventory(Path(raw_tmp), [inventory_row()])
+
+            record = VehicleInventory(path).resolve_query("Р   022   КС   198")
+
+            self.assertEqual(record.ip, "172.26.129.119")
+
+    def test_vehicle_number_resolves_as_garage_number_first(self) -> None:
+        with TemporaryDirectory() as raw_tmp:
+            path = write_inventory(
+                Path(raw_tmp),
+                [
+                    inventory_row(garage_number="6217", vehicle_id="garage-match", ip="172.26.129.119"),
+                    inventory_row(garage_number="9999", vehicle_id="6217", ip="172.26.129.120"),
+                ],
+            )
+
+            record = VehicleInventory(path).resolve_vehicle({"number": "6217"})
+
+            self.assertEqual(record.ip, "172.26.129.119")
+
+    def test_vehicle_inventory_invalid_ip_returns_vehicle_ip_not_found(self) -> None:
+        with TemporaryDirectory() as raw_tmp:
+            path = write_inventory(Path(raw_tmp), [inventory_row(ip="not-an-ip")])
+
+            with self.assertRaises(Exception) as raised:
+                VehicleInventory(path).resolve_query("6217")
+
+            self.assertEqual(getattr(raised.exception, "error_code"), "vehicle_ip_not_found")
+
+    def test_vehicle_inventory_not_found_returns_vehicle_ip_not_found(self) -> None:
+        with TemporaryDirectory() as raw_tmp:
+            path = write_inventory(Path(raw_tmp), [inventory_row()])
+
+            with self.assertRaises(Exception) as raised:
+                VehicleInventory(path).resolve_query("missing")
+
+            self.assertEqual(getattr(raised.exception, "error_code"), "vehicle_ip_not_found")
+
+    def test_vehicle_inventory_ambiguous_records_return_normalized_error(self) -> None:
+        with TemporaryDirectory() as raw_tmp:
+            path = write_inventory(
+                Path(raw_tmp),
+                [
+                    inventory_row(ip="172.26.129.119"),
+                    inventory_row(vehicle_id="81006218", ip="172.26.129.120"),
+                ],
+            )
+
+            with self.assertRaises(Exception) as raised:
+                VehicleInventory(path).resolve_query("6217")
+
+            self.assertEqual(getattr(raised.exception, "error_code"), "vehicle_inventory_ambiguous")
 
     def test_runner_config_reads_existing_container_env(self) -> None:
         keys = {
@@ -164,6 +280,57 @@ class WorkerServiceTests(unittest.TestCase):
             self.assertIs(result["ok"], True)
             self.assertNotIn("secret-password", json.dumps(result, ensure_ascii=False))
             self.assertEqual(service.secrets_by_task_id, {})
+
+    def test_create_task_resolves_vehicle_ip_from_inventory(self) -> None:
+        with TemporaryDirectory() as raw_tmp:
+            tmp_path = Path(raw_tmp)
+            inventory_path = write_inventory(tmp_path, [inventory_row()])
+            service = WorkerService(make_config_with_inventory(tmp_path, inventory_path))
+            payload = task_payload(operation="vehicle_reachability")
+            payload["vehicle"] = {"number": "6217"}
+
+            status, created = service.create_task(payload)
+            result = wait_for_terminal(service, created["task_id"])
+
+            self.assertEqual(status, 201)
+            self.assertEqual(result["state"], "finished")
+            self.assertEqual(result["vehicle"], {"number": "6217", "ip": "172.26.129.119"})
+
+    def test_create_task_with_explicit_vehicle_ip_keeps_current_behavior(self) -> None:
+        with TemporaryDirectory() as raw_tmp:
+            service = WorkerService(make_config(Path(raw_tmp)))
+            payload = task_payload(operation="vehicle_reachability")
+            payload["vehicle"] = {"number": "6217", "ip": "203.0.113.10"}
+
+            status, created = service.create_task(payload)
+            result = wait_for_terminal(service, created["task_id"])
+
+            self.assertEqual(status, 201)
+            self.assertEqual(result["vehicle"], {"number": "6217", "ip": "203.0.113.10"})
+
+    def test_vehicle_resolve_returns_record_without_vpn_secrets(self) -> None:
+        with TemporaryDirectory() as raw_tmp:
+            tmp_path = Path(raw_tmp)
+            inventory_path = write_inventory(tmp_path, [inventory_row()])
+            service = WorkerService(make_config_with_inventory(tmp_path, inventory_path))
+
+            response = service.resolve_vehicle("6217")
+            body = json.dumps(response, ensure_ascii=False)
+
+            self.assertEqual(response["vehicle"]["ip"], "172.26.129.119")
+            self.assertNotIn("secret-password", body)
+            self.assertNotIn("smoke-password", body)
+
+    def test_vehicle_resolve_requires_service_auth_and_request_id_contract(self) -> None:
+        validate_service_headers({"Authorization": "Bearer test-token", "X-Request-Id": "resolve-test"}, "test-token")
+
+        with self.assertRaises(Exception) as no_auth:
+            validate_service_headers({"X-Request-Id": "resolve-test"}, "test-token")
+        self.assertEqual(getattr(no_auth.exception, "status"), 401)
+
+        with self.assertRaises(Exception) as no_request_id:
+            validate_service_headers({"Authorization": "Bearer test-token"}, "test-token")
+        self.assertEqual(getattr(no_request_id.exception, "status"), 400)
 
     def test_task_response_contract(self) -> None:
         with TemporaryDirectory() as raw_tmp:

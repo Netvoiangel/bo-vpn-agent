@@ -15,6 +15,7 @@ from .models import TERMINAL_STATES, Task, Vehicle, VpnCredentials
 from .operations import capabilities_response, get_operation
 from .runner import RunnerFailure, create_runner
 from .security import fingerprint_request
+from .vehicle_inventory import VehicleInventory
 
 
 class RateLimiter:
@@ -47,6 +48,7 @@ class WorkerService:
         self.config = config
         self.artifact_store = ArtifactStore(config.artifact_dir, config.artifact_ttl_hours, config.max_artifact_bytes)
         self.audit = AuditLogger(config.audit_log_path)
+        self.vehicle_inventory = VehicleInventory(config.vehicle_inventory_path) if config.vehicle_inventory_path else None
         self.rate_limiter = RateLimiter(config.global_create_limit_per_minute, config.user_create_limit_per_minute)
         self.lock = threading.RLock()
         self.tasks_by_id: dict[str, Task] = {}
@@ -93,14 +95,17 @@ class WorkerService:
                 raise WorkerError(404, "task_not_found", "Задача не найдена")
             return task.to_response()
 
+    def resolve_vehicle(self, query: str) -> dict[str, object]:
+        if self.vehicle_inventory is None:
+            raise WorkerError(422, "vehicle_ip_not_found", "Vehicle inventory is not configured")
+        record = self.vehicle_inventory.resolve_query(query)
+        return {"ok": True, "query": query, "vehicle": record.to_response()}
+
     def _build_task(self, payload: dict[str, Any], fingerprint: str) -> tuple[Task, VpnCredentials]:
         vehicle_raw = payload.get("vehicle")
         if not isinstance(vehicle_raw, dict):
             raise ValidationError("vehicle обязателен")
-        vehicle = Vehicle(
-            number=self._require_str(vehicle_raw, "number", "vehicle.number"),
-            ip=self._require_str(vehicle_raw, "ip", "vehicle.ip"),
-        )
+        vehicle = self._build_vehicle(vehicle_raw)
 
         vpn_raw = payload.get("vpn")
         if not isinstance(vpn_raw, dict):
@@ -142,6 +147,18 @@ class WorkerService:
             state_changing=operation.state_changing,
         )
         return task, vpn
+
+    def _build_vehicle(self, vehicle_raw: dict[str, Any]) -> Vehicle:
+        ip = vehicle_raw.get("ip")
+        if isinstance(ip, str) and ip.strip():
+            return Vehicle(
+                number=self._require_str(vehicle_raw, "number", "vehicle.number"),
+                ip=ip.strip(),
+            )
+        if self.vehicle_inventory is None:
+            raise WorkerError(422, "vehicle_ip_not_found", "Vehicle inventory is not configured")
+        record = self.vehicle_inventory.resolve_vehicle(vehicle_raw)
+        return Vehicle(number=record.number, ip=record.ip)
 
     def _execute_task(self, task_id: str) -> None:
         vpn: VpnCredentials | None = None
