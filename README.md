@@ -176,6 +176,49 @@ docker compose -f docker-compose.worker.yml up --build
 
 The worker container does not mount `/var/run/docker.sock`.
 
+## Host-side Runner-Daemon As Systemd Service
+
+For the current MVP stand, runner-daemon stays on the host as an infrastructure component. This keeps the worker container simple and avoids mounting Docker socket into it. In `existing_container` mode, runner-daemon must be able to run `docker inspect` and `nsenter` into the `univpn-service` network namespace; on the stand the recommended service user is `root`.
+
+Install the environment file:
+
+```bash
+sudo cp deployment/systemd/bo-vpn-runner.env.example /etc/bo-vpn-runner.env
+sudo chown root:root /etc/bo-vpn-runner.env
+sudo chmod 600 /etc/bo-vpn-runner.env
+```
+
+Install and start the unit:
+
+```bash
+sudo cp deployment/systemd/bo-vpn-runner.service.example /etc/systemd/system/bo-vpn-runner.service
+sudo systemctl daemon-reload
+sudo systemctl enable bo-vpn-runner
+sudo systemctl start bo-vpn-runner
+sudo systemctl status bo-vpn-runner
+```
+
+Check health and logs:
+
+```bash
+curl -sS http://127.0.0.1:8091/health
+journalctl -u bo-vpn-runner -f
+```
+
+Confirmed smoke-test:
+
+```text
+Date: 2026-06-30
+Mode: dockerized worker + host-side runner-daemon + existing_container
+Vehicle: 6217 / 172.26.129.119
+Operation: vehicle_reachability
+Result:
+- tcp_22: open
+- tcp_443: open
+- tcp_80: closed
+- duration: 1 sec
+```
+
 Healthcheck:
 
 ```bash

@@ -53,12 +53,16 @@ class ExistingContainerExecutor:
         addr = self._nsenter(container_pid, ["ip", "addr", "show", "cnem_vnic"], timeout_sec=self.config.nsenter_timeout_sec)
         if addr.timed_out:
             raise RunnerFailure("operation_timeout", "VPN preflight: проверка cnem_vnic превысила timeout")
+        if _is_permission_denied(addr):
+            raise RunnerFailure("vpn_client_error", "VPN preflight: nsenter permission denied")
         if addr.returncode != 0 or "cnem_vnic" not in addr.stdout:
             raise RunnerFailure("vpn_client_error", "VPN preflight: интерфейс cnem_vnic отсутствует")
 
         routes = self._nsenter(container_pid, ["ip", "route"], timeout_sec=self.config.nsenter_timeout_sec)
         if routes.timed_out:
             raise RunnerFailure("operation_timeout", "VPN preflight: проверка маршрутов превысила timeout")
+        if _is_permission_denied(routes):
+            raise RunnerFailure("vpn_client_error", "VPN preflight: nsenter permission denied")
         if routes.returncode != 0:
             raise RunnerFailure("vpn_client_error", "VPN preflight: не удалось получить маршруты")
         if REQUIRED_VPN_ROUTE not in routes.stdout:
@@ -168,3 +172,8 @@ def _find_line_index(lines: list[str], prefix: str) -> int | None:
         if line.lstrip().startswith(prefix):
             return index
     return None
+
+
+def _is_permission_denied(result: CommandResult) -> bool:
+    output = f"{result.stderr}\n{result.stdout}".lower()
+    return result.returncode != 0 and "permission denied" in output

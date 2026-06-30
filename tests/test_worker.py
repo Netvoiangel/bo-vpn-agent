@@ -374,6 +374,24 @@ class WorkerServiceTests(unittest.TestCase):
             self.assertEqual(result["state"], "failed")
             self.assertEqual(result["error_code"], "vpn_client_error")
 
+    def test_existing_container_preflight_nsenter_permission_denied_is_explicit(self) -> None:
+        with TemporaryDirectory() as raw_tmp:
+            executor = FakeCommandExecutor(
+                [
+                    command_result(stdout="1234\n"),
+                    command_result(stderr="nsenter: reassociate to namespace 'ns/net' failed: Permission denied", returncode=1),
+                ]
+            )
+            service = RunnerDaemonService(_runner_config(Path(raw_tmp)), command_executor=executor)
+            _, created = service.create_job(_runner_job_payload(operation="vehicle_reachability"))
+            result = wait_for_job_terminal(service, created["job_id"])
+            message = str(result["message"]).lower()
+
+            self.assertEqual(result["state"], "failed")
+            self.assertEqual(result["error_code"], "vpn_client_error")
+            self.assertIn("permission denied", message)
+            self.assertIn("nsenter", message)
+
     def test_existing_container_missing_vpn_route_returns_vpn_client_error(self) -> None:
         with TemporaryDirectory() as raw_tmp:
             executor = FakeCommandExecutor(
