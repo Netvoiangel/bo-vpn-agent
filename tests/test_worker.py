@@ -296,6 +296,42 @@ class WorkerServiceTests(unittest.TestCase):
             self.assertEqual(result["state"], "finished")
             self.assertEqual(result["vehicle"], {"number": "6217", "ip": "172.26.129.119"})
 
+    def test_create_task_inventory_not_found_returns_vehicle_ip_not_found(self) -> None:
+        with TemporaryDirectory() as raw_tmp:
+            tmp_path = Path(raw_tmp)
+            inventory_path = write_inventory(tmp_path, [inventory_row()])
+            service = WorkerService(make_config_with_inventory(tmp_path, inventory_path))
+            payload = task_payload(operation="vehicle_reachability")
+            payload["vehicle"] = {"number": "missing-vehicle"}
+
+            with self.assertRaises(Exception) as raised:
+                service.create_task(payload)
+
+            self.assertEqual(getattr(raised.exception, "status"), 422)
+            self.assertEqual(getattr(raised.exception, "error_code"), "vehicle_ip_not_found")
+            self.assertNotIn("secret-password", json.dumps(raised.exception.to_response(), ensure_ascii=False))
+
+    def test_create_task_inventory_ambiguous_returns_normalized_error(self) -> None:
+        with TemporaryDirectory() as raw_tmp:
+            tmp_path = Path(raw_tmp)
+            inventory_path = write_inventory(
+                tmp_path,
+                [
+                    inventory_row(ip="172.26.129.119"),
+                    inventory_row(vehicle_id="81006218", ip="172.26.129.120"),
+                ],
+            )
+            service = WorkerService(make_config_with_inventory(tmp_path, inventory_path))
+            payload = task_payload(operation="vehicle_reachability")
+            payload["vehicle"] = {"number": "6217"}
+
+            with self.assertRaises(Exception) as raised:
+                service.create_task(payload)
+
+            self.assertEqual(getattr(raised.exception, "status"), 409)
+            self.assertEqual(getattr(raised.exception, "error_code"), "vehicle_inventory_ambiguous")
+            self.assertNotIn("secret-password", json.dumps(raised.exception.to_response(), ensure_ascii=False))
+
     def test_create_task_with_explicit_vehicle_ip_keeps_current_behavior(self) -> None:
         with TemporaryDirectory() as raw_tmp:
             service = WorkerService(make_config(Path(raw_tmp)))

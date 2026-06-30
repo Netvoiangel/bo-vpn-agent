@@ -335,6 +335,29 @@ ip = 172.26.129.119
 8. README содержит фактический статус: existing_container подтверждён, job_container отложен.
 ```
 
+### Failure scenarios
+
+| Scenario | Expected error | Status |
+| --- | --- | --- |
+| Inventory включён, но идентификатор ТС не найден | `vehicle_ip_not_found` | implemented/tested |
+| Inventory содержит несколько подходящих записей | `vehicle_inventory_ambiguous` | implemented/tested |
+| VPN container не найден, остановлен или PID не получен | `vpn_client_error` | implemented/tested |
+| Нет `cnem_vnic` | `vpn_client_error` | implemented/tested |
+| Нет маршрута `172.26.0.0/15` | `vpn_client_error` | implemented/tested |
+| `nsenter` возвращает permission denied | `vpn_client_error` with clear message | implemented/tested |
+| TCP `22/443/80` недоступны после успешного preflight | `vehicle_unreachable` | implemented/tested; requires real stand for operational proof |
+| `basic_status` не может подключиться по SSH | `ssh_failed` | implemented/tested; requires real stand for operational proof |
+| Внешняя команда превышает timeout | `operation_timeout` | implemented/tested |
+| Вторая задача приходит при активной задаче | `worker_busy` | implemented/tested; requires real stand for long-task proof |
+
+Operational note:
+
+```text
+- If vehicle_ip_not_found: check freshness and format of vehicles.csv first.
+- If vehicle_unreachable: check VPN preflight, resolved IP and TCP ports from inside UniVPN namespace.
+- If ssh_failed: check SSH key, user, port 22 and SSH availability inside namespace.
+```
+
 ## 17. Что осталось до целевого MVP по изначальному ТЗ
 
 ```text
@@ -376,12 +399,10 @@ ip = 172.26.129.119
 ```text
 Инкремент: hardening existing_container MVP
 
-1. Проверить и зафиксировать worker_busy на долгой задаче.
-2. Проверить общий timeout задачи.
-3. Проверить vehicle_unreachable на заведомо недоступном IP.
-4. Проверить ssh_failed при закрытом/недоступном SSH.
-5. Добавить README-раздел "Verified failure scenarios".
-6. Добавить curl-примеры для failure smoke-tests.
+1. Провести real-stand smoke-test для worker_busy на долгой задаче.
+2. Провести real-stand smoke-test общего timeout задачи.
+3. Провести real-stand smoke-test vehicle_unreachable на заведомо недоступном IP.
+4. Провести real-stand smoke-test ssh_failed при закрытом/недоступном SSH.
 ```
 
 После этого можно переходить к:

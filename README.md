@@ -173,6 +173,45 @@ curl -sS -X POST http://127.0.0.1:8000/tasks \
 
 Do not commit real vehicle inventory files with internal IP addresses. The repository includes only [examples/vehicles.csv](examples/vehicles.csv) with synthetic data; local files under `config/` are ignored except `config/.gitkeep`.
 
+## Verified Failure Scenarios
+
+The current `existing_container` MVP has mock-based test coverage for the main failure paths. Real stand verification is still required for failures that depend on actual vehicle/network state.
+
+| Scenario | Expected error | Coverage |
+| --- | --- | --- |
+| Vehicle is absent from inventory | `vehicle_ip_not_found` | Mock-based unit test |
+| Inventory has multiple matching records | `vehicle_inventory_ambiguous` | Mock-based unit test |
+| VPN container is missing/stopped or PID is unavailable | `vpn_client_error` | Mock-based unit test |
+| `cnem_vnic` is missing | `vpn_client_error` | Mock-based unit test |
+| VPN route `172.26.0.0/15` is missing | `vpn_client_error` | Mock-based unit test |
+| `nsenter` lacks permissions | `vpn_client_error` with `nsenter permission denied` | Mock-based unit test |
+| TCP ports `22/443/80` are unavailable after successful preflight | `vehicle_unreachable` | Mock-based unit test, real stand recommended |
+| SSH fails during `basic_status` | `ssh_failed` | Mock-based unit test, real stand recommended |
+| External command exceeds timeout | `operation_timeout` | Mock-based unit test |
+| Second task is created while one is active | `worker_busy` | Mock-based unit test, real stand recommended |
+
+Operational notes:
+
+- If a vehicle is not found in inventory, first check that `/app/config/vehicles.csv` is mounted, current and contains the lookup identifier.
+- If `vehicle_unreachable` is returned, check VPN preflight, the resolved IP and TCP ports `22/443/80` from inside the UniVPN namespace.
+- If `ssh_failed` is returned, check the SSH key, SSH user, port `22` and SSH availability from inside the UniVPN namespace.
+
+Smoke helper scripts are available under `scripts/smoke/`. They take parameters through environment variables and do not contain real secrets:
+
+```bash
+WORKER_URL=http://127.0.0.1:8000 AUTH_TOKEN=dev-token VEHICLE_QUERY=81006217 \
+  scripts/smoke/resolve_vehicle.sh
+
+WORKER_URL=http://127.0.0.1:8000 AUTH_TOKEN=dev-token VEHICLE_QUERY=81006217 \
+  REQUEST_ID=smoke-inventory-reachability-81006217-001 \
+  scripts/smoke/smoke_reachability_by_vehicle_id.sh
+
+WORKER_URL=http://127.0.0.1:8000 AUTH_TOKEN=dev-token TASK_ID=<task-id> \
+  scripts/smoke/get_task.sh
+```
+
+Manual failure smoke-tests should use controlled inputs, for example a missing inventory identifier for `vehicle_ip_not_found` or a known unreachable test IP for `vehicle_unreachable`. Do not use state-changing operations or arbitrary shell commands.
+
 ## Run locally
 
 ```bash
