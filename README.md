@@ -127,16 +127,59 @@ Preflight succeeds only when `cnem_vnic` exists and route `172.26.0.0/15` is pre
 python -m bo_vpn_agent --host 127.0.0.1 --port 8080
 ```
 
-Run the runner-daemon skeleton:
+Run the runner-daemon on the host:
 
 ```bash
 bo-vpn-runner-daemon --host 127.0.0.1 --port 8091
 ```
 
+## Run Worker In Docker
+
+For the current stand, run only the worker in Docker. Keep runner-daemon on the host so it can use `docker inspect`, `nsenter`, the SSH key and the UniVPN container PID without giving Docker socket access to the worker.
+
+```text
+bo-vpn-worker container
+    |
+    | BO_VPN_RUNNER_URL=http://host.docker.internal:8091
+    v
+bo-vpn-runner-daemon on host
+    |
+    | docker inspect + nsenter
+    v
+univpn-service
+```
+
+Start the host-side runner-daemon:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python3 -m pip install -e .
+
+export BO_VPN_EXISTING_CONTAINER_NAME=univpn-service
+export BO_VPN_DOCKER_BIN=/usr/bin/docker
+export BO_VPN_NSENTER_BIN=/usr/bin/nsenter
+export BO_VPN_SSH_BIN=/usr/bin/ssh
+export BO_VPN_SSH_KEY_PATH=/home/timur/univpn/rsa.key
+export BO_VPN_DEFAULT_SSH_USER=root
+export BO_VPN_NSENTER_TIMEOUT_SEC=8
+export BO_VPN_COMMAND_OUTPUT_MAX_BYTES=65536
+
+bo-vpn-runner-daemon --host 127.0.0.1 --port 8091
+```
+
+Start the Dockerized worker:
+
+```bash
+docker compose -f docker-compose.worker.yml up --build
+```
+
+The worker container does not mount `/var/run/docker.sock`.
+
 Healthcheck:
 
 ```bash
-curl http://127.0.0.1:8080/health
+curl http://127.0.0.1:8000/health
 ```
 
 Capabilities:
@@ -145,7 +188,7 @@ Capabilities:
 curl \
   -H 'Authorization: Bearer dev-token' \
   -H 'X-Request-Id: local-check' \
-  http://127.0.0.1:8080/capabilities
+  http://127.0.0.1:8000/capabilities
 ```
 
 Create a dry-run task:
@@ -165,7 +208,7 @@ curl -X POST \
     "params": {},
     "timeout_sec": 120
   }' \
-  http://127.0.0.1:8080/tasks
+  http://127.0.0.1:8000/tasks
 ```
 
 Create an `existing_container` smoke task for the verified stand vehicle:
@@ -186,7 +229,7 @@ curl -X POST \
     "runner_mode": "existing_container",
     "timeout_sec": 60
   }' \
-  http://127.0.0.1:8080/tasks
+  http://127.0.0.1:8000/tasks
 ```
 
 ## Security notes

@@ -1,0 +1,20 @@
+services:
+  bo-vpn-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: bo-vpn-worker
+    restart: unless-stopped
+    environment:
+      BO_VPN_WORKER_AUTH_TOKEN: "dev-token"
+      BO_VPN_DEFAULT_RUNNER_MODE: "existing_container"
+      BO_VPN_RUNNER_URL: "http://host.docker.internal:8091"
+      BO_VPN_AUDIT_LOG_PATH: "/app/logs/audit.jsonl"
+      BO_VPN_WORKER_HOST: "0.0.0.0"
+      BO_VPN_WORKER_PORT: "8000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./logs:/app/logs
