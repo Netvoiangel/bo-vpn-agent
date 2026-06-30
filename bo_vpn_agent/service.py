@@ -110,13 +110,17 @@ class WorkerService:
         vpn_raw = payload.get("vpn")
         if not isinstance(vpn_raw, dict):
             raise ValidationError("vpn обязателен")
-        vpn = VpnCredentials(
-            mode=self._require_str(vpn_raw, "mode", "vpn.mode"),
-            username=self._require_str(vpn_raw, "username", "vpn.username"),
-            password=self._require_str(vpn_raw, "password", "vpn.password"),
-        )
-        if vpn.mode != "inline_once":
-            raise ValidationError("В MVP поддерживается только vpn.mode=inline_once", "invalid_request", 400)
+        vpn_mode = self._require_str(vpn_raw, "mode", "vpn.mode")
+        if vpn_mode == "inline_once":
+            vpn = VpnCredentials(
+                mode=vpn_mode,
+                username=self._require_str(vpn_raw, "username", "vpn.username"),
+                password=self._require_str(vpn_raw, "password", "vpn.password"),
+            )
+        elif vpn_mode == "container_secret":
+            vpn = VpnCredentials(mode=vpn_mode, username="", password="")
+        else:
+            raise ValidationError("В MVP поддерживается только vpn.mode=inline_once или container_secret", "invalid_request", 400)
 
         operation_name = self._require_str(payload, "operation")
         operation = get_operation(operation_name)

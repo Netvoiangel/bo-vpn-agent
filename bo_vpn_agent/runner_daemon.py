@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 from .artifacts import ArtifactStore
 from .command_exec import CommandExecutor
 from .config import RunnerDaemonConfig
+from .container_namespace_executor import ContainerNamespaceExecutor
 from .errors import ValidationError, WorkerError
 from .existing_container_executor import ExistingContainerExecutor
 from .models import TASK_STATES, TERMINAL_STATES, Task, Vehicle, VpnCredentials
@@ -111,11 +112,17 @@ class RunnerDaemonService:
         if not isinstance(vpn_raw, dict):
             raise ValidationError("vpn обязателен")
         vehicle = Vehicle(number=_require_str(vehicle_raw, "number", "vehicle.number"), ip=_require_str(vehicle_raw, "ip", "vehicle.ip"))
-        vpn = VpnCredentials(
-            mode=_require_str(vpn_raw, "mode", "vpn.mode"),
-            username=_require_str(vpn_raw, "username", "vpn.username"),
-            password=_require_str(vpn_raw, "password", "vpn.password"),
-        )
+        vpn_mode = _require_str(vpn_raw, "mode", "vpn.mode")
+        if vpn_mode == "inline_once":
+            vpn = VpnCredentials(
+                mode=vpn_mode,
+                username=_require_str(vpn_raw, "username", "vpn.username"),
+                password=_require_str(vpn_raw, "password", "vpn.password"),
+            )
+        elif vpn_mode == "container_secret":
+            vpn = VpnCredentials(mode=vpn_mode, username="", password="")
+        else:
+            raise ValidationError("vpn.mode должен быть inline_once или container_secret")
         task = Task(
             task_id=str(uuid.uuid4()),
             request_id=request_id,
@@ -136,11 +143,17 @@ class RunnerDaemonService:
             job = self.jobs[job_id]
         runner = None
         existing_container_executor = None
+        container_namespace_executor = None
         if job.task.runner_mode == "existing_container":
             if self.command_executor is None:
                 existing_container_executor = ExistingContainerExecutor.from_config(self.config)
             else:
                 existing_container_executor = ExistingContainerExecutor(config=self.config, command_executor=self.command_executor)
+        elif job.task.runner_mode == "container_namespace":
+            if self.command_executor is None:
+                container_namespace_executor = ContainerNamespaceExecutor.from_config(self.config)
+            else:
+                container_namespace_executor = ContainerNamespaceExecutor(config=self.config, command_executor=self.command_executor)
         else:
             runner = create_runner(job.task.runner_mode, self.artifact_store)
 
@@ -160,6 +173,8 @@ class RunnerDaemonService:
                     if existing_container_executor is not None:
                         set_state("starting_vpn", "Поиск existing UniVPN container")
                         result_holder["result"] = existing_container_executor.run(job.task)
+                    elif container_namespace_executor is not None:
+                        result_holder["result"] = container_namespace_executor.run(job.task, job.vpn, set_state)
                     elif runner is not None:
                         result_holder["result"] = runner.run(job.task, job.vpn, set_state)
                 except BaseException as exc:  # noqa: BLE001 - normalize below

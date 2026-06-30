@@ -1,0 +1,76 @@
+services:
+  univpn-service:
+    image: local/univpn:10781.16.0.0730
+    container_name: univpn-service
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    volumes:
+      - ./univpn/profile:/home/timur/univpn/profile:ro
+      - ./univpn/secrets:/run/secrets:ro
+      - univpn-run:/run/univpn
+    networks:
+      - bo-vpn-internal
+    restart: unless-stopped
+
+  bo-vpn-runner:
+    build:
+      context: .
+      dockerfile: Dockerfile.runner
+    container_name: bo-vpn-runner
+    network_mode: "service:univpn-service"
+    depends_on:
+      - univpn-service
+    environment:
+      BO_VPN_RUNNER_HOST: "0.0.0.0"
+      BO_VPN_RUNNER_PORT: "8091"
+      BO_VPN_MANAGE_VPN_SESSION: "true"
+      BO_VPN_STOP_VPN_AFTER_TASK: "false"
+      BO_VPN_UNIVPN_CONTROL_PATH: "/run/univpn/univpn.in"
+      BO_VPN_UNIVPN_LOGIN_TIMEOUT_SEC: "45"
+      BO_VPN_UNIVPN_CONNECT_POLL_INTERVAL_SEC: "2"
+      BO_VPN_UNIVPN_ROUTE_CIDR: "172.26.0.0/15"
+      BO_VPN_UNIVPN_INTERFACE: "cnem_vnic"
+      BO_VPN_UNIVPN_LOGIN_MODE: "container_secret"
+      BO_VPN_UNIVPN_SECRET_PATH: "/run/secrets/univpn.env"
+      BO_VPN_SSH_BIN: "/usr/bin/ssh"
+      BO_VPN_SSH_KEY_PATH: "/run/keys/rsa.key"
+      BO_VPN_DEFAULT_SSH_USER: "root"
+      BO_VPN_NSENTER_TIMEOUT_SEC: "8"
+      BO_VPN_COMMAND_OUTPUT_MAX_BYTES: "65536"
+    volumes:
+      - ./keys/rsa.key:/run/keys/rsa.key:ro
+      - ./univpn/secrets:/run/secrets:ro
+      - univpn-run:/run/univpn
+    restart: unless-stopped
+
+  bo-vpn-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: bo-vpn-worker
+    depends_on:
+      - bo-vpn-runner
+    environment:
+      BO_VPN_WORKER_HOST: "0.0.0.0"
+      BO_VPN_WORKER_PORT: "8000"
+      BO_VPN_WORKER_AUTH_TOKEN: "dev-token"
+      BO_VPN_DEFAULT_RUNNER_MODE: "container_namespace"
+      BO_VPN_RUNNER_URL: "http://univpn-service:8091"
+      BO_VPN_VEHICLE_INVENTORY_PATH: "/app/config/vehicles.csv"
+      BO_VPN_AUDIT_LOG_PATH: "/app/logs/audit.jsonl"
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./config:/app/config:ro
+      - ./logs:/app/logs
+    networks:
+      - bo-vpn-internal
+    restart: unless-stopped
+
+networks:
+  bo-vpn-internal:
+
+volumes:
+  univpn-run:

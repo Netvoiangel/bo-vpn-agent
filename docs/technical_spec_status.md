@@ -1,6 +1,6 @@
 # BO/VPN Agent: ТЗ и статус реализации
 
-Дата фиксации: 2026-06-30.
+Дата фиксации: 2026-07-01.
 
 Этот документ фиксирует текущую сверку реализации `bo-vpn-agent` с исходным ТЗ. Сейчас рано заниматься полировкой результата `basic_status`; сначала важно держать ясную картину, что уже закрыто, что подтверждено стендом, а что остаётся частью будущего MVP.
 
@@ -10,6 +10,7 @@
 ТЗ в целом: выполнено примерно 35-45%
 MVP control plane: выполнено примерно 75-85%
 Стендовый existing_container MVP: выполнено примерно 65-75%
+Compose/container_namespace MVP: выполнено примерно 30-40%, experimental
 Целевая job_container-модель: выполнено примерно 10-15%
 ```
 
@@ -51,7 +52,9 @@ basic_status: OK
 | `vpn runner` | Сделано частично | Есть runner-daemon, systemd service, existing_container execution. |
 | `existing_container` режим | Подтверждено | Проверен на стенде через `univpn-service`. |
 | `job_container` режим | Placeholder | Есть boundary/placeholder, реального запуска job-контейнера пока нет. |
+| `container_namespace` режим | Сделано, experimental | Runner работает внутри shared namespace с `univpn-service`, без Docker и `nsenter`. Требует stand smoke-test. |
 | Одноразовая VPN-сессия на задачу | Не сделано | В стендовом режиме используется уже поднятый `univpn-service`. |
+| Managed VPN session | Сделано частично | Для `container_namespace` добавлен login через control path и preflight wait. Safe disconnect пока требует подтверждения UniVPN exit sequence. |
 | Cleanup одноразового контейнера | Не сделано | Актуально для будущего `job_container`. |
 
 Вывод: стендовый режим работает, целевая модель с одноразовым job-контейнером ещё впереди.
@@ -90,6 +93,7 @@ basic_status: OK
 | Docker packaging worker-а | Сделано |
 | `GET /vehicles/resolve` | Сделано |
 | File-based CSV inventory | Сделано |
+| External Telegram bot HTTP contract | Сделано |
 
 Вывод: API-слой MVP в хорошем состоянии.
 
@@ -180,6 +184,7 @@ basic_status: OK
 | Все операции имеют timeout | Частично | Timeout команд есть, общий task timeout надо проверить отдельно. |
 | VPN-сессия на задачу | Не сделано | В existing_container используется уже активная сессия. |
 | Cleanup после задачи | Частично | Для existing_container почти нечего чистить; для job_container ещё нет. |
+| Worker/bot без Docker socket | Соблюдено | Full-compose дизайн сохраняет Docker socket только вне worker/bot. |
 | Не давать shell обычным пользователям | Соблюдено |  |
 | Не делать state-changing операции | Соблюдено |  |
 
@@ -243,6 +248,10 @@ basic_status: OK
 | Runner env-file | Сделано |
 | Runner healthcheck | Сделано |
 | Проверка worker -> runner | Сделано |
+| Full compose stack | Experimental | Добавлен `docker-compose.full.yml`; реальные image/mounts/control pipe нужно сверить по `docker inspect univpn-service`. |
+| Runner container без Docker/nsenter | Сделано, mock-tested | Новый режим `container_namespace`. |
+| Managed VPN login через control path | Сделано частично | Login sequence реализован; safe disconnect sequence ещё нужно уточнить. |
+| External bot API contract | Сделано | См. `docs/bot_worker_api.md`. Бот остаётся внешним репозиторием. |
 | Runner auth/firewall | Не сделано |
 | Production deployment layout `/opt` | Не сделано |
 
@@ -260,6 +269,8 @@ basic_status: OK
 | Бот создаёт задачу в worker | Нет интеграции |
 | Worker выполняет задачу | Сделано |
 | Бот показывает результат | Нет интеграции |
+| Контракт для внешнего бота | Сделано |
+| Реализация бота в этом репозитории | Не требуется | Бот живёт в отдельном репозитории. |
 
 Вывод: backend-часть worker-а работает, пользовательский сценарий через Telegram ещё не реализован.
 
@@ -288,6 +299,10 @@ basic_status: OK
 20. Inventory смонтирован в Dockerized worker через `/app/config/vehicles.csv`.
 21. Создание задачи без явного `vehicle.ip` подтверждено на сервере через lookup по `vehicle_id`.
 22. `vehicle_reachability` через resolved IP подтверждён на сервере.
+23. `container_namespace` runner mode без Docker/nsenter.
+24. Managed VPN login hook через UniVPN control path.
+25. Experimental full compose deployment.
+26. HTTP contract для внешнего Telegram-бота.
 ```
 
 ### File-based vehicle inventory: стендовый статус
@@ -349,6 +364,11 @@ ip = 172.26.129.119
 | `basic_status` не может подключиться по SSH | `ssh_failed` | implemented/tested; requires real stand for operational proof |
 | Внешняя команда превышает timeout | `operation_timeout` | implemented/tested |
 | Вторая задача приходит при активной задаче | `worker_busy` | implemented/tested; requires real stand for long-task proof |
+| `container_namespace` runner вызывает Docker/nsenter | Не должен вызывать | implemented/tested |
+| `container_namespace` preflight без `cnem_vnic`/route | `vpn_client_error` | implemented/tested |
+| Managed VPN login уже подключённой сессии | login skipped | implemented/tested |
+| Managed VPN cleanup на success/failure | cleanup hook called | implemented/tested |
+| Managed VPN cleanup failure | warning, success not hidden | implemented/tested |
 
 Operational note:
 
@@ -361,17 +381,19 @@ Operational note:
 ## 17. Что осталось до целевого MVP по изначальному ТЗ
 
 ```text
-1. Реальный job_container runner.
-2. Поднятие UniVPN-сессии на задачу.
-3. Передача inline_once VPN-секретов в job-контейнер.
-4. Проверка auth failure / vpn timeout / vpn interactive required.
-5. Cleanup job-контейнера после success/failed/timeout.
-6. Artifact storage и download API.
-7. Persistent storage задач/idempotency.
-8. Интеграция с Telegram-ботом.
-9. Production-источник номер ТС -> IP: внешний inventory service или bot-side resolver вместо file-based MVP.
-10. Роли и политика доступа к конкретным ТС.
-11. Защита runner API.
+1. Stand discovery текущего univpn-service через docker inspect.
+2. Stand smoke-test full compose / container_namespace.
+3. Подтвердить safe UniVPN disconnect sequence.
+4. Реальный job_container runner.
+5. Передача inline_once VPN-секретов в job-контейнер.
+6. Проверка auth failure / vpn timeout / vpn interactive required.
+7. Cleanup job-контейнера после success/failed/timeout.
+8. Artifact storage и download API.
+9. Persistent storage задач/idempotency.
+10. Интеграция с Telegram-ботом во внешнем репозитории.
+11. Production-источник номер ТС -> IP: внешний inventory service или bot-side resolver вместо file-based MVP.
+12. Роли и политика доступа к конкретным ТС.
+13. Защита runner API.
 ```
 
 ## 18. Что точно пока не трогать

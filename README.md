@@ -67,6 +67,7 @@ Set `BO_VPN_DEFAULT_RUNNER_MODE`:
 
 - `dry_run` - default, no UniVPN connection, useful for bot integration and API checks.
 - `existing_container` - staging/debug mode for execution from an existing VPN network namespace.
+- `container_namespace` - experimental full-compose mode where runner already shares the UniVPN container network namespace and does not use Docker or `nsenter`.
 - `job_container` - target MVP boundary; currently fails with a normalized `vpn_client_error` until a host runner-daemon is wired in.
 
 The worker does not mount or use the Docker socket directly.
@@ -112,6 +113,15 @@ BO_VPN_SSH_KEY_PATH=/home/timur/univpn/rsa.key
 BO_VPN_DEFAULT_SSH_USER=root
 BO_VPN_NSENTER_TIMEOUT_SEC=8
 BO_VPN_COMMAND_OUTPUT_MAX_BYTES=65536
+BO_VPN_MANAGE_VPN_SESSION=false
+BO_VPN_STOP_VPN_AFTER_TASK=false
+BO_VPN_UNIVPN_CONTROL_PATH=/run/univpn/univpn.in
+BO_VPN_UNIVPN_LOGIN_TIMEOUT_SEC=45
+BO_VPN_UNIVPN_CONNECT_POLL_INTERVAL_SEC=2
+BO_VPN_UNIVPN_ROUTE_CIDR=172.26.0.0/15
+BO_VPN_UNIVPN_INTERFACE=cnem_vnic
+BO_VPN_UNIVPN_LOGIN_MODE=container_secret
+BO_VPN_UNIVPN_SECRET_PATH=/run/secrets/univpn.env
 ```
 
 ## Existing Container Preflight
@@ -123,6 +133,24 @@ Before any `existing_container` operation, runner-daemon checks the active UniVP
 - `nsenter -t <PID> -n ip route`
 
 Preflight succeeds only when `cnem_vnic` exists and route `172.26.0.0/15` is present. Missing container, missing interface or missing VPN route returns `vpn_client_error`; after successful preflight, closed `22/443/80` on the vehicle returns `vehicle_unreachable`.
+
+## Container Namespace Runner
+
+`container_namespace` is the experimental compose-oriented runner mode. It assumes runner-daemon is already running inside the same network namespace as `univpn-service`:
+
+```text
+worker container -> runner container -> shared UniVPN namespace -> vehicle
+```
+
+In this mode runner-daemon:
+
+- does not call Docker;
+- does not call `nsenter`;
+- checks `cnem_vnic` and route `172.26.0.0/15` with ordinary `ip` commands;
+- runs TCP checks and SSH normally from inside the shared namespace;
+- can write the UniVPN login sequence to `BO_VPN_UNIVPN_CONTROL_PATH` when `BO_VPN_MANAGE_VPN_SESSION=true`.
+
+`BO_VPN_STOP_VPN_AFTER_TASK=false` is the default because the safe UniVPN disconnect sequence still has to be confirmed on the stand. See [docs/compose_vpn_runner_design.md](docs/compose_vpn_runner_design.md).
 
 ## Vehicle Inventory
 
@@ -267,6 +295,48 @@ docker compose -f docker-compose.worker.yml up --build
 
 The worker container does not mount `/var/run/docker.sock`.
 
+## Full Docker Compose Deployment
+
+`docker-compose.full.yml` is an experimental full-stack deployment for:
+
+- `univpn-service`;
+- `bo-vpn-runner`;
+- `bo-vpn-worker`.
+
+It keeps the worker and bot away from Docker socket access. The runner container uses `network_mode: "service:univpn-service"` and calls the new `container_namespace` executor.
+
+Before using it as the main stand flow, run the live discovery commands in [docs/compose_vpn_runner_design.md](docs/compose_vpn_runner_design.md) and align image, entrypoint, mounts, secrets and UniVPN control path with the current `univpn-service`.
+
+Start:
+
+```bash
+docker compose -f docker-compose.full.yml up -d --build
+docker compose -f docker-compose.full.yml ps
+```
+
+Check that host routing did not change:
+
+```bash
+ip route
+ip addr
+```
+
+The compose design intentionally avoids `network_mode: host` for UniVPN so routes through `cnem_vnic` stay inside the container namespace.
+
+## External Telegram Bot Integration
+
+The Telegram bot stays in a separate repository. It should call only the worker HTTP API:
+
+- `GET /health`
+- `GET /capabilities`
+- `GET /vehicles/resolve?query=...`
+- `POST /tasks`
+- `GET /tasks/{task_id}`
+
+The bot must not call Docker, `nsenter`, SSH, UniVPN CLI or arbitrary shell commands. In the full-compose flow, it should send `vpn.mode=container_secret`; credentials are mounted only into the runner/UniVPN environment.
+
+Detailed request examples, polling guidance and error mapping are documented in [docs/bot_worker_api.md](docs/bot_worker_api.md).
+
 ## Host-side Runner-Daemon As Systemd Service
 
 For the current MVP stand, runner-daemon stays on the host as an infrastructure component. This keeps the worker container simple and avoids mounting Docker socket into it. In `existing_container` mode, runner-daemon must be able to run `docker inspect` and `nsenter` into the `univpn-service` network namespace; on the stand the recommended service user is `root`.
@@ -380,7 +450,7 @@ curl -X POST \
 
 ## Security notes
 
-- VPN credentials are accepted only as `vpn.mode=inline_once`.
+- VPN credentials are accepted as `vpn.mode=inline_once` for per-task stand checks or `vpn.mode=container_secret` for compose-managed runner secrets.
 - VPN credentials are kept in in-memory task state only while the task runs.
 - VPN password and full username are not returned by API responses or audit log.
 - Request bodies are not written to access logs.

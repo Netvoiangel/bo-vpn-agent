@@ -61,6 +61,16 @@ class RunnerDaemonConfig:
     default_ssh_user: str = "root"
     nsenter_timeout_sec: int = 8
     command_output_max_bytes: int = 64 * 1024
+    manage_vpn_session: bool = False
+    stop_vpn_after_task: bool = False
+    univpn_control_path: Path = Path("/run/univpn/univpn.in")
+    univpn_login_timeout_sec: int = 45
+    univpn_connect_poll_interval_sec: float = 2.0
+    univpn_route_cidr: str = "172.26.0.0/15"
+    univpn_interface: str = "cnem_vnic"
+    univpn_login_mode: str = "container_secret"
+    univpn_secret_path: Path = Path("/run/secrets/univpn.env")
+    univpn_disconnect_sequence: str | None = None
     artifact_dir: Path = Path("var/runner-artifacts")
     artifact_ttl_hours: int = 24
     max_artifact_bytes: int = 10 * 1024 * 1024
@@ -79,7 +89,24 @@ class RunnerDaemonConfig:
             default_ssh_user=os.getenv("BO_VPN_DEFAULT_SSH_USER", "root"),
             nsenter_timeout_sec=int(os.getenv("BO_VPN_NSENTER_TIMEOUT_SEC", "8")),
             command_output_max_bytes=int(os.getenv("BO_VPN_COMMAND_OUTPUT_MAX_BYTES", str(64 * 1024))),
+            manage_vpn_session=_env_bool("BO_VPN_MANAGE_VPN_SESSION", False),
+            stop_vpn_after_task=_env_bool("BO_VPN_STOP_VPN_AFTER_TASK", False),
+            univpn_control_path=Path(os.getenv("BO_VPN_UNIVPN_CONTROL_PATH", "/run/univpn/univpn.in")),
+            univpn_login_timeout_sec=int(os.getenv("BO_VPN_UNIVPN_LOGIN_TIMEOUT_SEC", "45")),
+            univpn_connect_poll_interval_sec=float(os.getenv("BO_VPN_UNIVPN_CONNECT_POLL_INTERVAL_SEC", "2")),
+            univpn_route_cidr=os.getenv("BO_VPN_UNIVPN_ROUTE_CIDR", "172.26.0.0/15"),
+            univpn_interface=os.getenv("BO_VPN_UNIVPN_INTERFACE", "cnem_vnic"),
+            univpn_login_mode=os.getenv("BO_VPN_UNIVPN_LOGIN_MODE", "container_secret"),
+            univpn_secret_path=Path(os.getenv("BO_VPN_UNIVPN_SECRET_PATH", "/run/secrets/univpn.env")),
+            univpn_disconnect_sequence=os.getenv("BO_VPN_UNIVPN_DISCONNECT_SEQUENCE"),
             artifact_dir=Path(os.getenv("BO_VPN_RUNNER_ARTIFACT_DIR", "var/runner-artifacts")),
             artifact_ttl_hours=int(os.getenv("BO_VPN_ARTIFACT_TTL_HOURS", "24")),
             max_artifact_bytes=int(os.getenv("BO_VPN_MAX_ARTIFACT_BYTES", str(10 * 1024 * 1024))),
         )
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}

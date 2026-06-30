@@ -253,6 +253,41 @@ class WorkerServiceTests(unittest.TestCase):
         self.assertEqual(config.nsenter_timeout_sec, 9)
         self.assertEqual(config.command_output_max_bytes, 12345)
 
+    def test_runner_config_reads_managed_vpn_env(self) -> None:
+        keys = {
+            "BO_VPN_MANAGE_VPN_SESSION": "true",
+            "BO_VPN_STOP_VPN_AFTER_TASK": "1",
+            "BO_VPN_UNIVPN_CONTROL_PATH": "/run/univpn/custom.in",
+            "BO_VPN_UNIVPN_LOGIN_TIMEOUT_SEC": "12",
+            "BO_VPN_UNIVPN_CONNECT_POLL_INTERVAL_SEC": "0.5",
+            "BO_VPN_UNIVPN_ROUTE_CIDR": "172.26.0.0/15",
+            "BO_VPN_UNIVPN_INTERFACE": "cnem_vnic",
+            "BO_VPN_UNIVPN_LOGIN_MODE": "container_secret",
+            "BO_VPN_UNIVPN_SECRET_PATH": "/run/secrets/custom.env",
+            "BO_VPN_UNIVPN_DISCONNECT_SEQUENCE": "q",
+        }
+        previous = {key: os.environ.get(key) for key in keys}
+        try:
+            os.environ.update(keys)
+            config = RunnerDaemonConfig.from_env()
+        finally:
+            for key, value in previous.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
+        self.assertTrue(config.manage_vpn_session)
+        self.assertTrue(config.stop_vpn_after_task)
+        self.assertEqual(config.univpn_control_path, Path("/run/univpn/custom.in"))
+        self.assertEqual(config.univpn_login_timeout_sec, 12)
+        self.assertEqual(config.univpn_connect_poll_interval_sec, 0.5)
+        self.assertEqual(config.univpn_route_cidr, "172.26.0.0/15")
+        self.assertEqual(config.univpn_interface, "cnem_vnic")
+        self.assertEqual(config.univpn_login_mode, "container_secret")
+        self.assertEqual(config.univpn_secret_path, Path("/run/secrets/custom.env"))
+        self.assertEqual(config.univpn_disconnect_sequence, "q")
+
     def test_capabilities_only_contains_mvp_operations(self) -> None:
         with TemporaryDirectory() as raw_tmp:
             service = WorkerService(make_config(Path(raw_tmp)))
@@ -673,6 +708,239 @@ class WorkerServiceTests(unittest.TestCase):
             self.assertEqual(result["state"], "failed")
             self.assertEqual(result["error_code"], "ssh_failed")
 
+    def test_container_namespace_runner_does_not_call_docker_or_nsenter(self) -> None:
+        with TemporaryDirectory() as raw_tmp:
+            executor = FakeCommandExecutor(
+                [
+                    *_container_preflight_success(),
+                    command_result(stdout='{"22":"open","443":"closed","80":"closed"}\n'),
+                ]
+            )
+            service = RunnerDaemonService(_container_runner_config(Path(raw_tmp)), command_executor=executor)
+            _, created = service.create_job(_runner_job_payload(operation="vehicle_reachability", runner_mode="container_namespace"))
+            result = wait_for_job_terminal(service, created["job_id"])
+
+            self.assertEqual(result["state"], "finished")
+            self.assertEqual(result["data"]["tcp_22"], "open")
+            flattened_calls = " ".join(" ".join(call) for call in executor.calls)
+            self.assertNotIn("docker", flattened_calls)
+            self.assertNotIn("nsenter", flattened_calls)
+
+    def test_container_namespace_preflight_checks_interface_and_route(self) -> None:
+        with TemporaryDirectory() as raw_tmp:
+            executor = FakeCommandExecutor(
+                [
+                    *_container_preflight_success(),
+                    command_result(stdout='{"22":"open","443":"closed","80":"closed"}\n'),
+                ]
+            )
+            service = RunnerDaemonService(_container_runner_config(Path(raw_tmp)), command_executor=executor)
+            _, created = service.create_job(_runner_job_payload(operation="vehicle_reachability", runner_mode="container_namespace"))
+            wait_for_job_terminal(service, created["job_id"])
+
+            self.assertEqual(executor.calls[0], ("ip", "-br", "addr", "show", "cnem_vnic"))
+            self.assertEqual(executor.calls[1], ("ip", "route"))
+
+    def test_container_namespace_basic_status_uses_plain_ssh_path(self) -> None:
+        with TemporaryDirectory() as raw_tmp:
+            executor = FakeCommandExecutor(
+                [
+                    *_container_preflight_success(),
+                    command_result(
+                        stdout=(
+                            "mic\n"
+                            " up 1 day\n"
+                            "2026-06-30T10:00:00+03:00\n"
+                            "Filesystem Size Used Avail Use% Mounted on\n"
+                            "/dev/root 20G 8G 12G 41% /\n"
+                            "total used free\n"
+                            "Mem: 1024 512 256\n"
+                        )
+                    ),
+                ]
+            )
+            service = RunnerDaemonService(_container_runner_config(Path(raw_tmp)), command_executor=executor)
+            _, created = service.create_job(_runner_job_payload(operation="basic_status", runner_mode="container_namespace"))
+            result = wait_for_job_terminal(service, created["job_id"])
+
+            self.assertEqual(result["state"], "finished")
+            self.assertEqual(executor.calls[2][0], "/usr/bin/ssh")
+            self.assertNotIn("/usr/bin/nsenter", executor.calls[2])
+
+    def test_container_namespace_managed_login_writes_sequence_without_api_secret_leak(self) -> None:
+        with TemporaryDirectory() as raw_tmp:
+            tmp_path = Path(raw_tmp)
+            secret_path = tmp_path / "univpn.env"
+            control_path = tmp_path / "univpn.in"
+            secret_path.write_text("VPN_USERNAME=stand-user\nVPN_PASSWORD=stand-password\n", encoding="utf-8")
+            executor = FakeCommandExecutor(
+                [
+                    command_result(stderr='Device "cnem_vnic" does not exist.', returncode=1),
+                    *_container_preflight_success(),
+                    command_result(stdout='{"22":"open","443":"closed","80":"closed"}\n'),
+                ]
+            )
+            service = RunnerDaemonService(
+                _container_runner_config(
+                    tmp_path,
+                    manage_vpn_session=True,
+                    univpn_secret_path=secret_path,
+                    univpn_control_path=control_path,
+                    univpn_login_timeout_sec=0,
+                    univpn_connect_poll_interval_sec=0,
+                ),
+                command_executor=executor,
+            )
+            _, created = service.create_job(
+                _runner_job_payload(operation="vehicle_reachability", runner_mode="container_namespace", vpn_mode="container_secret")
+            )
+            result = wait_for_job_terminal(service, created["job_id"])
+            body = json.dumps(result, ensure_ascii=False)
+
+            self.assertEqual(result["state"], "finished")
+            self.assertEqual(control_path.read_text(encoding="utf-8"), "3\n1\nstand-user\nstand-password\n")
+            self.assertNotIn("stand-password", body)
+            self.assertNotIn("stand-user", body)
+
+    def test_container_namespace_skips_login_when_already_connected(self) -> None:
+        with TemporaryDirectory() as raw_tmp:
+            tmp_path = Path(raw_tmp)
+            control_path = tmp_path / "univpn.in"
+            executor = FakeCommandExecutor(
+                [
+                    *_container_preflight_success(),
+                    command_result(stdout='{"22":"open","443":"closed","80":"closed"}\n'),
+                ]
+            )
+            service = RunnerDaemonService(
+                _container_runner_config(tmp_path, manage_vpn_session=True, univpn_control_path=control_path),
+                command_executor=executor,
+            )
+            _, created = service.create_job(
+                _runner_job_payload(operation="vehicle_reachability", runner_mode="container_namespace", vpn_mode="container_secret")
+            )
+            result = wait_for_job_terminal(service, created["job_id"])
+
+            self.assertEqual(result["state"], "finished")
+            self.assertFalse(control_path.exists())
+
+    def test_container_namespace_missing_route_after_login_returns_vpn_client_error(self) -> None:
+        with TemporaryDirectory() as raw_tmp:
+            tmp_path = Path(raw_tmp)
+            secret_path = tmp_path / "univpn.env"
+            secret_path.write_text("VPN_USERNAME=stand-user\nVPN_PASSWORD=stand-password\n", encoding="utf-8")
+            executor = FakeCommandExecutor(
+                [
+                    command_result(stderr='Device "cnem_vnic" does not exist.', returncode=1),
+                    command_result(stdout="cnem_vnic UNKNOWN 192.168.122.203/28\n"),
+                    command_result(stdout="default via 172.18.0.1 dev eth0\n"),
+                ]
+            )
+            service = RunnerDaemonService(
+                _container_runner_config(
+                    tmp_path,
+                    manage_vpn_session=True,
+                    univpn_secret_path=secret_path,
+                    univpn_login_timeout_sec=0,
+                    univpn_connect_poll_interval_sec=0,
+                ),
+                command_executor=executor,
+            )
+            _, created = service.create_job(
+                _runner_job_payload(operation="vehicle_reachability", runner_mode="container_namespace", vpn_mode="container_secret")
+            )
+            result = wait_for_job_terminal(service, created["job_id"])
+
+            self.assertEqual(result["state"], "failed")
+            self.assertEqual(result["error_code"], "vpn_client_error")
+
+    def test_container_namespace_cleanup_is_called_on_success(self) -> None:
+        with TemporaryDirectory() as raw_tmp:
+            tmp_path = Path(raw_tmp)
+            control_path = tmp_path / "univpn.in"
+            executor = FakeCommandExecutor(
+                [
+                    *_container_preflight_success(),
+                    command_result(stdout='{"22":"open","443":"closed","80":"closed"}\n'),
+                ]
+            )
+            service = RunnerDaemonService(
+                _container_runner_config(
+                    tmp_path,
+                    stop_vpn_after_task=True,
+                    univpn_control_path=control_path,
+                    univpn_disconnect_sequence="q",
+                ),
+                command_executor=executor,
+            )
+            _, created = service.create_job(_runner_job_payload(operation="vehicle_reachability", runner_mode="container_namespace"))
+            result = wait_for_job_terminal(service, created["job_id"])
+
+            self.assertEqual(result["state"], "finished")
+            self.assertEqual(control_path.read_text(encoding="utf-8"), "q\n")
+
+    def test_container_namespace_cleanup_is_called_on_failure(self) -> None:
+        with TemporaryDirectory() as raw_tmp:
+            tmp_path = Path(raw_tmp)
+            control_path = tmp_path / "univpn.in"
+            executor = FakeCommandExecutor(
+                [
+                    *_container_preflight_success(),
+                    command_result(stdout='{"22":"closed","443":"closed","80":"closed"}\n'),
+                ]
+            )
+            service = RunnerDaemonService(
+                _container_runner_config(
+                    tmp_path,
+                    stop_vpn_after_task=True,
+                    univpn_control_path=control_path,
+                    univpn_disconnect_sequence="q",
+                ),
+                command_executor=executor,
+            )
+            _, created = service.create_job(_runner_job_payload(operation="vehicle_reachability", runner_mode="container_namespace"))
+            result = wait_for_job_terminal(service, created["job_id"])
+
+            self.assertEqual(result["state"], "failed")
+            self.assertEqual(result["error_code"], "vehicle_unreachable")
+            self.assertEqual(control_path.read_text(encoding="utf-8"), "q\n")
+
+    def test_container_namespace_cleanup_failure_adds_warning_to_success(self) -> None:
+        with TemporaryDirectory() as raw_tmp:
+            tmp_path = Path(raw_tmp)
+            bad_parent = tmp_path / "not-a-directory"
+            bad_parent.write_text("file", encoding="utf-8")
+            executor = FakeCommandExecutor(
+                [
+                    *_container_preflight_success(),
+                    command_result(stdout='{"22":"open","443":"closed","80":"closed"}\n'),
+                ]
+            )
+            service = RunnerDaemonService(
+                _container_runner_config(
+                    tmp_path,
+                    stop_vpn_after_task=True,
+                    univpn_control_path=bad_parent / "univpn.in",
+                    univpn_disconnect_sequence="q",
+                ),
+                command_executor=executor,
+            )
+            _, created = service.create_job(_runner_job_payload(operation="vehicle_reachability", runner_mode="container_namespace"))
+            result = wait_for_job_terminal(service, created["job_id"])
+
+            self.assertEqual(result["state"], "finished")
+            self.assertIn("UniVPN cleanup failed", result["warnings"])
+
+    def test_bot_api_contract_doc_matches_current_schema(self) -> None:
+        doc = Path("docs/bot_worker_api.md").read_text(encoding="utf-8")
+
+        self.assertIn("POST /tasks", doc)
+        self.assertIn('"telegram_user_id"', doc)
+        self.assertIn('"operation": "vehicle_reachability"', doc)
+        self.assertIn('"operation": "basic_status"', doc)
+        self.assertIn('"runner_mode": "container_namespace"', doc)
+        self.assertIn('"mode": "container_secret"', doc)
+
 def _runner_config(tmp_path: Path) -> RunnerDaemonConfig:
     return RunnerDaemonConfig(
         artifact_dir=tmp_path / "runner-artifacts",
@@ -688,12 +956,44 @@ def _runner_config(tmp_path: Path) -> RunnerDaemonConfig:
     )
 
 
-def _runner_job_payload(operation: str) -> dict[str, object]:
+def _container_runner_config(
+    tmp_path: Path,
+    manage_vpn_session: bool = False,
+    stop_vpn_after_task: bool = False,
+    univpn_control_path: Path | None = None,
+    univpn_secret_path: Path | None = None,
+    univpn_login_timeout_sec: int = 45,
+    univpn_connect_poll_interval_sec: float = 0,
+    univpn_disconnect_sequence: str | None = None,
+) -> RunnerDaemonConfig:
+    return RunnerDaemonConfig(
+        artifact_dir=tmp_path / "runner-artifacts",
+        artifact_ttl_hours=24,
+        ssh_bin="/usr/bin/ssh",
+        ssh_key_path=Path("/run/keys/rsa.key"),
+        default_ssh_user="root",
+        nsenter_timeout_sec=8,
+        command_output_max_bytes=64 * 1024,
+        manage_vpn_session=manage_vpn_session,
+        stop_vpn_after_task=stop_vpn_after_task,
+        univpn_control_path=univpn_control_path or tmp_path / "univpn.in",
+        univpn_secret_path=univpn_secret_path or tmp_path / "univpn.env",
+        univpn_login_timeout_sec=univpn_login_timeout_sec,
+        univpn_connect_poll_interval_sec=univpn_connect_poll_interval_sec,
+        univpn_disconnect_sequence=univpn_disconnect_sequence,
+    )
+
+
+def _runner_job_payload(operation: str, runner_mode: str = "existing_container", vpn_mode: str = "inline_once") -> dict[str, object]:
+    if vpn_mode == "container_secret":
+        vpn = {"mode": "container_secret"}
+    else:
+        vpn = {"mode": "inline_once", "username": "demo", "password": "secret-password"}
     return {
-        "request_id": f"existing-container-{operation}",
-        "runner_mode": "existing_container",
+        "request_id": f"{runner_mode}-{operation}",
+        "runner_mode": runner_mode,
         "vehicle": {"number": "6968", "ip": "172.26.130.165"},
-        "vpn": {"mode": "inline_once", "username": "demo", "password": "secret-password"},
+        "vpn": vpn,
         "operation": operation,
         "params": {},
         "timeout_sec": 8,
@@ -707,6 +1007,18 @@ def _preflight_success() -> list[CommandResult]:
             stdout=(
                 "10.208.0.0/16 via 192.168.122.203 dev cnem_vnic\n"
                 "10.224.0.0/11 via 192.168.122.203 dev cnem_vnic\n"
+                "172.26.0.0/15 via 192.168.122.203 dev cnem_vnic\n"
+                "192.168.100.0/22 via 192.168.122.203 dev cnem_vnic\n"
+            )
+        ),
+    ]
+
+
+def _container_preflight_success() -> list[CommandResult]:
+    return [
+        command_result(stdout="cnem_vnic UNKNOWN 192.168.122.203/28\n"),
+        command_result(
+            stdout=(
                 "172.26.0.0/15 via 192.168.122.203 dev cnem_vnic\n"
                 "192.168.100.0/22 via 192.168.122.203 dev cnem_vnic\n"
             )
