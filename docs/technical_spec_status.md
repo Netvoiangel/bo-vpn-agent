@@ -39,7 +39,7 @@ basic_status: OK
 | Бот остаётся UI-слоем | Частично | В коде worker это учтено, но интеграции с реальным ботом пока нет. |
 | Worker отвечает за диагностику и структурированный результат | Сделано частично | `vehicle_reachability` и `basic_status` возвращают структурированный результат. |
 | Не смешивать bot/VPN/SSH/browser logic | Сделано | Worker и runner разделены. Docker socket в worker не монтируется. |
-| File-based inventory номер ТС -> IP | Сделано частично | Стендовое MVP-решение внутри worker-а; позже заменить на внешний inventory service или bot-side resolver. |
+| File-based inventory номер ТС -> IP | Сделано | Стендовое MVP-решение внутри worker-а; lookup по `vehicle_id` подтверждён на сервере. Позже заменить на внешний inventory service или bot-side resolver. |
 
 Вывод: архитектурное разделение соблюдено.
 
@@ -89,7 +89,7 @@ basic_status: OK
 | Контрактные тесты API | Сделано |
 | Docker packaging worker-а | Сделано |
 | `GET /vehicles/resolve` | Сделано |
-| File-based CSV inventory | Сделано частично |
+| File-based CSV inventory | Сделано |
 
 Вывод: API-слой MVP в хорошем состоянии.
 
@@ -285,7 +285,42 @@ basic_status: OK
 17. Контрактные и mock-based тесты.
 18. File-based CSV inventory для разрешения номера ТС в IP.
 19. Endpoint `GET /vehicles/resolve`.
+20. Inventory смонтирован в Dockerized worker через `/app/config/vehicles.csv`.
+21. Создание задачи без явного `vehicle.ip` подтверждено на сервере через lookup по `vehicle_id`.
+22. `vehicle_reachability` через resolved IP подтверждён на сервере.
 ```
+
+### File-based vehicle inventory: стендовый статус
+
+```text
+Status:
+- implemented;
+- mounted into Dockerized worker;
+- resolve by vehicle_id confirmed on server;
+- task creation without explicit vehicle.ip confirmed;
+- vehicle_reachability through resolved IP confirmed.
+
+Known data issue:
+- current exported garage_number column contains row/index value, not real garage number;
+- lookup by real garage number requires corrected export;
+- for current smoke-tests use vehicle_id.
+```
+
+Текущий рабочий идентификатор для smoke-test ТС `6217 / 172.26.129.119`:
+
+```text
+vehicle_id = 81006217
+```
+
+В текущем CSV эта запись резолвится как:
+
+```text
+garage_number = 376
+vehicle_id = 81006217
+ip = 172.26.129.119
+```
+
+Это означает, что `garage_number` сейчас семантически является индексом строки выгрузки. Перед интеграцией с ботом формат inventory нужно привести к виду, где реальный номер ТС хранится в `garage_number`, а индекс строки, если нужен, вынесен в отдельное поле `inventory_row`.
 
 ## 16. Что осталось до честного стендового MVP
 
