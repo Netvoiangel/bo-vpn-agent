@@ -137,10 +137,10 @@ class RunnerDaemonService:
         runner = None
         existing_container_executor = None
         if job.task.runner_mode == "existing_container":
-            existing_container_executor = ExistingContainerExecutor(
-                config=self.config,
-                command_executor=self.command_executor or ExistingContainerExecutor.from_config(self.config).command_executor,
-            )
+            if self.command_executor is None:
+                existing_container_executor = ExistingContainerExecutor.from_config(self.config)
+            else:
+                existing_container_executor = ExistingContainerExecutor(config=self.config, command_executor=self.command_executor)
         else:
             runner = create_runner(job.task.runner_mode, self.artifact_store)
 

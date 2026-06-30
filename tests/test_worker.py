@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import time
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from bo_vpn_agent.api import validate_service_headers
-from bo_vpn_agent.command_exec import CommandResult
+from bo_vpn_agent.command_exec import CommandResult, SubprocessCommandExecutor
 from bo_vpn_agent.config import RunnerDaemonConfig, WorkerConfig
 from bo_vpn_agent.runner_daemon import RunnerDaemonService
 from bo_vpn_agent.service import WorkerService
@@ -73,6 +74,15 @@ def command_result(stdout: str = "", stderr: str = "", returncode: int = 0, time
 
 
 class WorkerServiceTests(unittest.TestCase):
+    def test_subprocess_command_executor_limits_output(self) -> None:
+        executor = SubprocessCommandExecutor(max_output_bytes=10)
+
+        result = executor.run([sys.executable, "-c", "print('x' * 100)"], timeout_sec=5)
+
+        self.assertEqual(result.returncode, 0)
+        self.assertLessEqual(len(result.stdout.encode("utf-8")), 10)
+        self.assertTrue(result.output_truncated)
+
     def test_worker_config_reads_current_env_names(self) -> None:
         keys = {
             "BO_VPN_WORKER_AUTH_TOKEN": "token-from-env",
@@ -105,6 +115,7 @@ class WorkerServiceTests(unittest.TestCase):
             "BO_VPN_SSH_KEY_PATH": "/keys/rsa.key",
             "BO_VPN_DEFAULT_SSH_USER": "root-test",
             "BO_VPN_NSENTER_TIMEOUT_SEC": "9",
+            "BO_VPN_COMMAND_OUTPUT_MAX_BYTES": "12345",
         }
         previous = {key: os.environ.get(key) for key in keys}
         try:
@@ -124,6 +135,7 @@ class WorkerServiceTests(unittest.TestCase):
         self.assertEqual(config.ssh_key_path, Path("/keys/rsa.key"))
         self.assertEqual(config.default_ssh_user, "root-test")
         self.assertEqual(config.nsenter_timeout_sec, 9)
+        self.assertEqual(config.command_output_max_bytes, 12345)
 
     def test_capabilities_only_contains_mvp_operations(self) -> None:
         with TemporaryDirectory() as raw_tmp:
@@ -304,6 +316,7 @@ class WorkerServiceTests(unittest.TestCase):
             executor = FakeCommandExecutor(
                 [
                     command_result(stdout="1234\n"),
+                    *_preflight_success(),
                     command_result(stdout='{"22":"open","443":"open","80":"closed"}\n'),
                 ]
             )
@@ -318,6 +331,8 @@ class WorkerServiceTests(unittest.TestCase):
             self.assertNotIn("secret-password", body)
             self.assertEqual(executor.calls[0][:4], ("/usr/bin/docker", "inspect", "-f", "{{.State.Pid}}"))
             self.assertEqual(executor.calls[1][:4], ("/usr/bin/nsenter", "-t", "1234", "-n"))
+            self.assertEqual(executor.calls[1][4:], ("ip", "addr", "show", "cnem_vnic"))
+            self.assertEqual(executor.calls[2][4:], ("ip", "route"))
 
     def test_existing_container_docker_inspect_failure_returns_vpn_client_error(self) -> None:
         with TemporaryDirectory() as raw_tmp:
@@ -344,11 +359,43 @@ class WorkerServiceTests(unittest.TestCase):
             self.assertEqual(result["state"], "failed")
             self.assertEqual(result["error_code"], "operation_timeout")
 
+    def test_existing_container_missing_cnem_vnic_returns_vpn_client_error(self) -> None:
+        with TemporaryDirectory() as raw_tmp:
+            executor = FakeCommandExecutor(
+                [
+                    command_result(stdout="1234\n"),
+                    command_result(stderr='Device "cnem_vnic" does not exist.', returncode=1),
+                ]
+            )
+            service = RunnerDaemonService(_runner_config(Path(raw_tmp)), command_executor=executor)
+            _, created = service.create_job(_runner_job_payload(operation="vehicle_reachability"))
+            result = wait_for_job_terminal(service, created["job_id"])
+
+            self.assertEqual(result["state"], "failed")
+            self.assertEqual(result["error_code"], "vpn_client_error")
+
+    def test_existing_container_missing_vpn_route_returns_vpn_client_error(self) -> None:
+        with TemporaryDirectory() as raw_tmp:
+            executor = FakeCommandExecutor(
+                [
+                    command_result(stdout="1234\n"),
+                    command_result(stdout="cnem_vnic        UNKNOWN        192.168.122.203/28\n"),
+                    command_result(stdout="default via 172.17.0.1 dev eth0\n172.17.0.0/16 dev eth0\n"),
+                ]
+            )
+            service = RunnerDaemonService(_runner_config(Path(raw_tmp)), command_executor=executor)
+            _, created = service.create_job(_runner_job_payload(operation="vehicle_reachability"))
+            result = wait_for_job_terminal(service, created["job_id"])
+
+            self.assertEqual(result["state"], "failed")
+            self.assertEqual(result["error_code"], "vpn_client_error")
+
     def test_existing_container_all_tcp_ports_unavailable_returns_vehicle_unreachable(self) -> None:
         with TemporaryDirectory() as raw_tmp:
             executor = FakeCommandExecutor(
                 [
                     command_result(stdout="1234\n"),
+                    *_preflight_success(),
                     command_result(stdout='{"22":"closed","443":"closed","80":"closed"}\n'),
                 ]
             )
@@ -364,6 +411,7 @@ class WorkerServiceTests(unittest.TestCase):
             executor = FakeCommandExecutor(
                 [
                     command_result(stdout="1234\n"),
+                    *_preflight_success(),
                     command_result(
                         stdout=(
                             "mic\n"
@@ -393,6 +441,7 @@ class WorkerServiceTests(unittest.TestCase):
             executor = FakeCommandExecutor(
                 [
                     command_result(stdout="1234\n"),
+                    *_preflight_success(),
                     command_result(stderr="permission denied", returncode=255),
                 ]
             )
@@ -414,6 +463,7 @@ def _runner_config(tmp_path: Path) -> RunnerDaemonConfig:
         ssh_key_path=Path("/home/timur/univpn/rsa.key"),
         default_ssh_user="root",
         nsenter_timeout_sec=8,
+        command_output_max_bytes=64 * 1024,
     )
 
 
@@ -427,6 +477,20 @@ def _runner_job_payload(operation: str) -> dict[str, object]:
         "params": {},
         "timeout_sec": 8,
     }
+
+
+def _preflight_success() -> list[CommandResult]:
+    return [
+        command_result(stdout="cnem_vnic        UNKNOWN        192.168.122.203/28\n"),
+        command_result(
+            stdout=(
+                "10.208.0.0/16 via 192.168.122.203 dev cnem_vnic\n"
+                "10.224.0.0/11 via 192.168.122.203 dev cnem_vnic\n"
+                "172.26.0.0/15 via 192.168.122.203 dev cnem_vnic\n"
+                "192.168.100.0/22 via 192.168.122.203 dev cnem_vnic\n"
+            )
+        ),
+    ]
 
 
 if __name__ == "__main__":

@@ -10,6 +10,7 @@ from .runner import RunnerFailure, RunnerResult
 
 
 TCP_PORTS = (22, 443, 80)
+REQUIRED_VPN_ROUTE = "172.26.0.0/15"
 
 
 @dataclass(slots=True)
@@ -19,10 +20,11 @@ class ExistingContainerExecutor:
 
     @classmethod
     def from_config(cls, config: RunnerDaemonConfig) -> "ExistingContainerExecutor":
-        return cls(config=config, command_executor=SubprocessCommandExecutor())
+        return cls(config=config, command_executor=SubprocessCommandExecutor(config.command_output_max_bytes))
 
     def run(self, task: Task) -> RunnerResult:
         container_pid = self._container_pid()
+        self._preflight(container_pid)
         if task.operation == "vehicle_reachability":
             return self._vehicle_reachability(container_pid, task)
         if task.operation == "basic_status":
@@ -46,6 +48,21 @@ class ExistingContainerExecutor:
         if result.returncode != 0 or not pid or pid == "0":
             raise RunnerFailure("vpn_client_error", "Не удалось получить PID existing UniVPN container")
         return pid
+
+    def _preflight(self, container_pid: str) -> None:
+        addr = self._nsenter(container_pid, ["ip", "addr", "show", "cnem_vnic"], timeout_sec=self.config.nsenter_timeout_sec)
+        if addr.timed_out:
+            raise RunnerFailure("operation_timeout", "VPN preflight: проверка cnem_vnic превысила timeout")
+        if addr.returncode != 0 or "cnem_vnic" not in addr.stdout:
+            raise RunnerFailure("vpn_client_error", "VPN preflight: интерфейс cnem_vnic отсутствует")
+
+        routes = self._nsenter(container_pid, ["ip", "route"], timeout_sec=self.config.nsenter_timeout_sec)
+        if routes.timed_out:
+            raise RunnerFailure("operation_timeout", "VPN preflight: проверка маршрутов превысила timeout")
+        if routes.returncode != 0:
+            raise RunnerFailure("vpn_client_error", "VPN preflight: не удалось получить маршруты")
+        if REQUIRED_VPN_ROUTE not in routes.stdout:
+            raise RunnerFailure("vpn_client_error", "VPN preflight: маршрут 172.26.0.0/15 отсутствует")
 
     def _vehicle_reachability(self, container_pid: str, task: Task) -> RunnerResult:
         payload = {
@@ -151,4 +168,3 @@ def _find_line_index(lines: list[str], prefix: str) -> int | None:
         if line.lstrip().startswith(prefix):
             return index
     return None
-

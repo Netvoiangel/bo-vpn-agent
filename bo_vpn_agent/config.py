@@ -56,6 +56,7 @@ class RunnerDaemonConfig:
     ssh_key_path: Path = Path("/home/timur/univpn/rsa.key")
     default_ssh_user: str = "root"
     nsenter_timeout_sec: int = 8
+    command_output_max_bytes: int = 64 * 1024
     artifact_dir: Path = Path("var/runner-artifacts")
     artifact_ttl_hours: int = 24
     max_artifact_bytes: int = 10 * 1024 * 1024
@@ -73,6 +74,7 @@ class RunnerDaemonConfig:
             ssh_key_path=Path(os.getenv("BO_VPN_SSH_KEY_PATH", "/home/timur/univpn/rsa.key")),
             default_ssh_user=os.getenv("BO_VPN_DEFAULT_SSH_USER", "root"),
             nsenter_timeout_sec=int(os.getenv("BO_VPN_NSENTER_TIMEOUT_SEC", "8")),
+            command_output_max_bytes=int(os.getenv("BO_VPN_COMMAND_OUTPUT_MAX_BYTES", str(64 * 1024))),
             artifact_dir=Path(os.getenv("BO_VPN_RUNNER_ARTIFACT_DIR", "var/runner-artifacts")),
             artifact_ttl_hours=int(os.getenv("BO_VPN_ARTIFACT_TTL_HOURS", "24")),
             max_artifact_bytes=int(os.getenv("BO_VPN_MAX_ARTIFACT_BYTES", str(10 * 1024 * 1024))),

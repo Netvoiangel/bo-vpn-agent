@@ -28,7 +28,7 @@ Not implemented yet:
 - production artifact file storage
 - real UniVPN connection lifecycle
 
-Current summary: implemented MVP worker control plane; partially implemented runner boundary and runner modes; pending real host-side runner-daemon and UniVPN/job container execution.
+Current summary: implemented MVP worker control plane and runner boundary; implemented `existing_container` execution in code; pending real smoke-test on the UniVPN stand and `job_container` execution.
 
 ## MVP API
 
@@ -108,7 +108,18 @@ BO_VPN_SSH_BIN=/usr/bin/ssh
 BO_VPN_SSH_KEY_PATH=/home/timur/univpn/rsa.key
 BO_VPN_DEFAULT_SSH_USER=root
 BO_VPN_NSENTER_TIMEOUT_SEC=8
+BO_VPN_COMMAND_OUTPUT_MAX_BYTES=65536
 ```
+
+## Existing Container Preflight
+
+Before any `existing_container` operation, runner-daemon checks the active UniVPN session inside the existing container namespace:
+
+- `docker inspect -f '{{.State.Pid}}' univpn-service`
+- `nsenter -t <PID> -n ip addr show cnem_vnic`
+- `nsenter -t <PID> -n ip route`
+
+Preflight succeeds only when `cnem_vnic` exists and route `172.26.0.0/15` is present. Missing container, missing interface or missing VPN route returns `vpn_client_error`; after successful preflight, closed `22/443/80` on the vehicle returns `vehicle_unreachable`.
 
 ## Run locally
 
@@ -153,6 +164,27 @@ curl -X POST \
     "operation": "basic_status",
     "params": {},
     "timeout_sec": 120
+  }' \
+  http://127.0.0.1:8080/tasks
+```
+
+Create an `existing_container` smoke task for the verified stand vehicle:
+
+```bash
+curl -X POST \
+  -H 'Authorization: Bearer dev-token' \
+  -H 'X-Request-Id: smoke-existing-reachability-001' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "request_id": "smoke-existing-reachability-001",
+    "telegram_user_id": 123456,
+    "user_role": "engineer",
+    "vehicle": {"number": "6217", "ip": "172.26.129.119"},
+    "vpn": {"mode": "inline_once", "username": "smoke-user", "password": "smoke-password"},
+    "operation": "vehicle_reachability",
+    "params": {},
+    "runner_mode": "existing_container",
+    "timeout_sec": 60
   }' \
   http://127.0.0.1:8080/tasks
 ```
