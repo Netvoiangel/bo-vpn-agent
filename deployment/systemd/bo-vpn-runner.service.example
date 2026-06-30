@@ -9,7 +9,7 @@ Type=simple
 User=root
 WorkingDirectory=/home/timur/bo-vpn-agent
 EnvironmentFile=/etc/bo-vpn-runner.env
-ExecStart=/home/timur/bo-vpn-agent/.venv/bin/bo-vpn-runner-daemon --host 0.0.0.0 --port 8091
+ExecStart=/usr/bin/bash -lc 'cd /home/timur/bo-vpn-agent && exec /home/timur/bo-vpn-agent/.venv/bin/python -m bo_vpn_agent.runner_daemon_main --host 0.0.0.0 --port 8091'
 Restart=always
 RestartSec=3
 

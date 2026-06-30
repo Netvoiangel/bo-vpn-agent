@@ -205,6 +205,18 @@ curl -sS http://127.0.0.1:8091/health
 journalctl -u bo-vpn-runner -f
 ```
 
+If the service fails with `status=203/EXEC` and `Permission denied`, check the executable path and SELinux state:
+
+```bash
+ls -l /home/timur/bo-vpn-agent/.venv/bin/bo-vpn-runner-daemon
+namei -l /home/timur/bo-vpn-agent/.venv/bin/bo-vpn-runner-daemon
+getenforce
+ls -Z /home/timur/bo-vpn-agent/.venv/bin/bo-vpn-runner-daemon
+journalctl -xeu bo-vpn-runner --no-pager | tail -80
+```
+
+On AlmaLinux/RHEL with SELinux in `Enforcing` mode, systemd may refuse to execute an entrypoint script directly from `/home/.../.venv/bin`. The example unit runs the daemon through `python -m bo_vpn_agent.runner_daemon_main` to avoid the fragile console-script path. A later production layout should move the runner to `/opt/bo-vpn-agent` with `/etc/bo-vpn-runner.env`.
+
 Confirmed smoke-test:
 
 ```text
