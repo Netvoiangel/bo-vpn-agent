@@ -314,6 +314,8 @@ The compose file is aligned to the inspected stand `univpn-service`, but it is s
 
 The UniVPN FIFO is created at `/run/univpn/univpn.in` instead of the inspected `/run/univpn.in` so runner can write to it through the shared `univpn-run` volume. This is a compose command override, not an image change. Details are in [docs/compose_vpn_runner_design.md](docs/compose_vpn_runner_design.md).
 
+Security warning: older unsafe full-compose attempts wrote the UniVPN console session to logs. Do not run `docker logs univpn-service` on an old unsafe container and do not inspect old UniVPN console transcripts casually; they may contain UniVPN credentials. Remove the old container/logs and rotate UniVPN credentials if they were exposed. The current compose command discards the UniVPN console session to `/dev/null`.
+
 Start:
 
 ```bash

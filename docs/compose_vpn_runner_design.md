@@ -35,7 +35,7 @@ bash -lc '
     mkfifo /run/univpn.in
     /usr/local/UniVPN/promote/UniVPNPromoteService >/var/log/univpn/promote.log 2>&1 &
     cd /usr/local/UniVPN/serviceclient
-    tail -f /run/univpn.in | script -qfec "su - vpn -c /usr/local/UniVPN/serviceclient/UniVPNCS" /var/log/univpn/univpn-console.log
+    tail -f /run/univpn.in | script -qfec "su - vpn -c /usr/local/UniVPN/serviceclient/UniVPNCS" <console-transcript>
 '
 ```
 
@@ -48,6 +48,26 @@ Still to confirm on the stand:
 - A safe UniVPN disconnect/exit sequence.
 
 Until those smoke-tests pass, `docker-compose.full.yml` remains experimental and must not be treated as production-ready.
+
+## Secret Logging Hardening
+
+UniVPN CLI echoes interactive credential input. For this reason, full-compose intentionally discards the UniVPN console session:
+
+```bash
+tail -f /run/univpn/univpn.in | script -qfec "su - vpn -c /usr/local/UniVPN/serviceclient/UniVPNCS" /dev/null >/dev/null 2>&1
+```
+
+This keeps the pseudo-terminal behavior required by the CLI, but sends the `script` transcript, stdout and stderr to `/dev/null`.
+
+Security rules:
+
+- Do not write the UniVPN console session to `/var/log/univpn`.
+- Do not expose UniVPN console stdout/stderr through `docker logs univpn-service`.
+- Keep `/var/log/univpn/promote.log` only for the promote service.
+- Do not echo login sequence lines in shell commands.
+- Treat logs from old unsafe full-compose containers as potentially containing UniVPN credentials and rotate credentials if they were exposed.
+
+Runner phase messages must stay high-level: login started, waiting for `cnem_vnic`, route found or missing, connected or failed, cleanup started or finished. Runner must not log `VPN_USERNAME` or `VPN_PASSWORD` values.
 
 ## Current Host-Side Scheme
 

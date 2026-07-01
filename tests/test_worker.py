@@ -954,6 +954,24 @@ class WorkerServiceTests(unittest.TestCase):
         self.assertIn("experimental", doc)
         self.assertIn("must not be treated as production-ready", doc)
 
+    def test_full_compose_discards_univpn_console_session(self) -> None:
+        compose = Path("docker-compose.full.yml").read_text(encoding="utf-8")
+
+        self.assertNotIn("/var/log/univpn/univpn-console.log", compose)
+        self.assertIn('script -qfec "su - vpn -c /usr/local/UniVPN/serviceclient/UniVPNCS" /dev/null', compose)
+        self.assertIn(">/dev/null 2>&1", compose)
+
+    def test_docs_warn_about_old_univpn_logs_and_credential_rotation(self) -> None:
+        readme = Path("README.md").read_text(encoding="utf-8").lower()
+        design = Path("docs/compose_vpn_runner_design.md").read_text(encoding="utf-8").lower()
+
+        self.assertIn("old unsafe", readme)
+        self.assertIn("rotate", readme)
+        self.assertIn("credential", readme)
+        self.assertIn("secret logging hardening", design)
+        self.assertIn("console session", design)
+        self.assertIn("/dev/null", design)
+
 def _runner_config(tmp_path: Path) -> RunnerDaemonConfig:
     return RunnerDaemonConfig(
         artifact_dir=tmp_path / "runner-artifacts",

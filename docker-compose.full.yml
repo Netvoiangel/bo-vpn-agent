@@ -17,7 +17,7 @@ services:
         mkfifo /run/univpn/univpn.in
         /usr/local/UniVPN/promote/UniVPNPromoteService >/var/log/univpn/promote.log 2>&1 &
         cd /usr/local/UniVPN/serviceclient
-        tail -f /run/univpn/univpn.in | script -qfec "su - vpn -c /usr/local/UniVPN/serviceclient/UniVPNCS" /var/log/univpn/univpn-console.log
+        tail -f /run/univpn/univpn.in | script -qfec "su - vpn -c /usr/local/UniVPN/serviceclient/UniVPNCS" /dev/null >/dev/null 2>&1
     volumes:
       - /home/timur/univpn/profile:/home/vpn/UniVPN
       - /home/timur/univpn/secret.env:/run/secrets/univpn.env:ro
