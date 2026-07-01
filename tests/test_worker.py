@@ -1047,12 +1047,13 @@ class WorkerServiceTests(unittest.TestCase):
         self.assertIn('"runner_mode": "container_namespace"', doc)
         self.assertIn('"mode": "container_secret"', doc)
 
-    def test_compose_design_doc_marks_full_compose_experimental(self) -> None:
+    def test_compose_design_doc_marks_full_compose_verified_mvp(self) -> None:
         doc = Path("docs/compose_vpn_runner_design.md").read_text(encoding="utf-8").lower()
 
         self.assertIn("docker-compose.full.yml", doc)
-        self.assertIn("experimental", doc)
-        self.assertIn("must not be treated as production-ready", doc)
+        self.assertIn("verified mvp", doc)
+        self.assertIn("vehicle_reachability", doc)
+        self.assertIn("not a production-final deployment", doc)
 
     def test_full_compose_discards_univpn_console_session(self) -> None:
         compose = Path("docker-compose.full.yml").read_text(encoding="utf-8")
@@ -1060,6 +1061,13 @@ class WorkerServiceTests(unittest.TestCase):
         self.assertNotIn("/var/log/univpn/univpn-console.log", compose)
         self.assertIn('script -qfec "su - vpn -c /usr/local/UniVPN/serviceclient/UniVPNCS" /dev/null', compose)
         self.assertIn(">/dev/null 2>&1", compose)
+
+    def test_compose_smoke_script_uses_verified_runner_mode(self) -> None:
+        script = Path("scripts/smoke/smoke_compose_reachability_by_ip.sh").read_text(encoding="utf-8")
+
+        self.assertIn('\\"vpn\\": {\\"mode\\": \\"container_secret\\"}', script)
+        self.assertIn('\\"runner_mode\\": \\"container_namespace\\"', script)
+        self.assertIn('\\"operation\\": \\"vehicle_reachability\\"', script)
 
     def test_docs_warn_about_old_univpn_logs_and_credential_rotation(self) -> None:
         readme = Path("README.md").read_text(encoding="utf-8").lower()

@@ -28,9 +28,9 @@ Not implemented yet:
 - real `job_container` Docker execution
 - persistent task storage
 - production artifact file storage
-- real UniVPN connection lifecycle
+- remaining UniVPN cleanup/disconnect lifecycle
 
-Current summary: implemented MVP worker control plane and runner boundary; implemented `existing_container` execution in code; pending real smoke-test on the UniVPN stand and `job_container` execution.
+Current summary: implemented MVP worker control plane and runner boundary; verified `existing_container` and full-compose `container_namespace` paths for `vehicle_reachability`; pending `job_container` execution and the remaining MVP diagnostic operations.
 
 ## MVP API
 
@@ -67,7 +67,7 @@ Set `BO_VPN_DEFAULT_RUNNER_MODE`:
 
 - `dry_run` - default, no UniVPN connection, useful for bot integration and API checks.
 - `existing_container` - staging/debug mode for execution from an existing VPN network namespace.
-- `container_namespace` - experimental full-compose mode where runner already shares the UniVPN container network namespace and does not use Docker or `nsenter`.
+- `container_namespace` - verified full-compose MVP mode for `vehicle_reachability`; runner shares the UniVPN container network namespace and does not use Docker or `nsenter`.
 - `job_container` - target MVP boundary; currently fails with a normalized `vpn_client_error` until a host runner-daemon is wired in.
 
 The worker does not mount or use the Docker socket directly.
@@ -140,7 +140,7 @@ Preflight succeeds only when `cnem_vnic` exists and route `172.26.0.0/15` is pre
 
 ## Container Namespace Runner
 
-`container_namespace` is the experimental compose-oriented runner mode. It assumes runner-daemon is already running inside the same network namespace as `univpn-service`:
+`container_namespace` is the verified full-compose MVP runner mode for `vehicle_reachability`. It assumes runner-daemon is already running inside the same network namespace as `univpn-service`:
 
 ```text
 worker container -> runner container -> shared UniVPN namespace -> vehicle
@@ -242,6 +242,10 @@ WORKER_URL=http://127.0.0.1:8000 AUTH_TOKEN=dev-token VEHICLE_QUERY=81006217 \
 
 WORKER_URL=http://127.0.0.1:8000 AUTH_TOKEN=dev-token TASK_ID=<task-id> \
   scripts/smoke/get_task.sh
+
+WORKER_URL=http://127.0.0.1:8000 AUTH_TOKEN=dev-token VEHICLE_IP=172.26.129.179 \
+  REQUEST_ID=compose-check-172-26-129-179-001 \
+  scripts/smoke/smoke_compose_reachability_by_ip.sh
 ```
 
 Manual failure smoke-tests should use controlled inputs, for example a missing inventory identifier for `vehicle_ip_not_found` or a known unreachable test IP for `vehicle_unreachable`. Do not use state-changing operations or arbitrary shell commands.
@@ -303,7 +307,7 @@ The worker container does not mount `/var/run/docker.sock`.
 
 ## Full Docker Compose Deployment
 
-`docker-compose.full.yml` is an experimental full-stack deployment for:
+`docker-compose.full.yml` is the verified full-stack MVP deployment for `vehicle_reachability`:
 
 - `univpn-service`;
 - `bo-vpn-runner`;
@@ -311,7 +315,7 @@ The worker container does not mount `/var/run/docker.sock`.
 
 It keeps the worker and bot away from Docker socket access. The runner container uses `network_mode: "service:univpn-service"` and calls the new `container_namespace` executor.
 
-The compose file is aligned to the inspected stand `univpn-service`, but it is still experimental until a successful full-compose smoke-test. It uses these host paths:
+The compose file is aligned to the inspected stand `univpn-service` and has passed a server smoke-test for `runner_mode=container_namespace`, `vpn.mode=container_secret` and `operation=vehicle_reachability`. It uses these host paths:
 
 - `/home/timur/univpn/profile` -> `/home/vpn/UniVPN`
 - `/home/timur/univpn/secret.env` -> `/run/secrets/univpn.env:ro`
@@ -321,6 +325,25 @@ The compose file is aligned to the inspected stand `univpn-service`, but it is s
 The UniVPN FIFO is created at `/run/univpn/univpn.in` instead of the inspected `/run/univpn.in` so runner can write to it through the shared `univpn-run` volume. This is a compose command override, not an image change. Details are in [docs/compose_vpn_runner_design.md](docs/compose_vpn_runner_design.md).
 
 Security warning: older unsafe full-compose attempts wrote the UniVPN console session to logs. Do not run `docker logs univpn-service` on an old unsafe container and do not inspect old UniVPN console transcripts casually; they may contain UniVPN credentials. Remove the old container/logs and rotate UniVPN credentials if they were exposed. The current compose command discards the UniVPN console session to `/dev/null`.
+
+Confirmed full-compose smoke-test:
+
+```text
+Server: 192.168.10.50
+Mode: docker-compose.full.yml
+runner_mode: container_namespace
+vpn.mode: container_secret
+Operation: vehicle_reachability
+Vehicle IP: 172.26.129.179
+Task ID: 3b7a19ab-37b7-48f0-969d-3569eb6d59b2
+Result:
+- state: finished
+- duration_sec: 20
+- summary: ТС доступно через UniVPN container namespace
+- tcp_22: open
+- tcp_443: open
+- tcp_80: closed
+```
 
 Start:
 
@@ -349,6 +372,16 @@ The Telegram bot stays in a separate repository. It should call only the worker 
 - `GET /tasks/{task_id}`
 
 The bot must not call Docker, `nsenter`, SSH, UniVPN CLI or arbitrary shell commands. In the full-compose flow, it should send `vpn.mode=container_secret`; credentials are mounted only into the runner/UniVPN environment.
+
+Recommended bot task mode for the verified deployment:
+
+```json
+{
+  "vpn": {"mode": "container_secret"},
+  "runner_mode": "container_namespace",
+  "operation": "vehicle_reachability"
+}
+```
 
 Detailed request examples, polling guidance and error mapping are documented in [docs/bot_worker_api.md](docs/bot_worker_api.md).
 
