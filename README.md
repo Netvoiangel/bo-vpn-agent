@@ -305,7 +305,14 @@ The worker container does not mount `/var/run/docker.sock`.
 
 It keeps the worker and bot away from Docker socket access. The runner container uses `network_mode: "service:univpn-service"` and calls the new `container_namespace` executor.
 
-Before using it as the main stand flow, run the live discovery commands in [docs/compose_vpn_runner_design.md](docs/compose_vpn_runner_design.md) and align image, entrypoint, mounts, secrets and UniVPN control path with the current `univpn-service`.
+The compose file is aligned to the inspected stand `univpn-service`, but it is still experimental until a successful full-compose smoke-test. It uses these host paths:
+
+- `/home/timur/univpn/profile` -> `/home/vpn/UniVPN`
+- `/home/timur/univpn/secret.env` -> `/run/secrets/univpn.env:ro`
+- `/home/timur/univpn/logs` -> `/var/log/univpn`
+- `/home/timur/univpn/rsa.key` -> `/run/keys/rsa.key:ro`
+
+The UniVPN FIFO is created at `/run/univpn/univpn.in` instead of the inspected `/run/univpn.in` so runner can write to it through the shared `univpn-run` volume. This is a compose command override, not an image change. Details are in [docs/compose_vpn_runner_design.md](docs/compose_vpn_runner_design.md).
 
 Start:
 

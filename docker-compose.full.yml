@@ -6,9 +6,22 @@ services:
       - NET_ADMIN
     devices:
       - /dev/net/tun:/dev/net/tun
+    command:
+      - bash
+      - -lc
+      - |
+        set -e
+        useradd -m vpn >/dev/null 2>&1 || true
+        chown -R vpn:vpn /home/vpn/UniVPN
+        rm -f /run/univpn/univpn.in
+        mkfifo /run/univpn/univpn.in
+        /usr/local/UniVPN/promote/UniVPNPromoteService >/var/log/univpn/promote.log 2>&1 &
+        cd /usr/local/UniVPN/serviceclient
+        tail -f /run/univpn/univpn.in | script -qfec "su - vpn -c /usr/local/UniVPN/serviceclient/UniVPNCS" /var/log/univpn/univpn-console.log
     volumes:
-      - ./univpn/profile:/home/timur/univpn/profile:ro
-      - ./univpn/secrets:/run/secrets:ro
+      - /home/timur/univpn/profile:/home/vpn/UniVPN
+      - /home/timur/univpn/secret.env:/run/secrets/univpn.env:ro
+      - /home/timur/univpn/logs:/var/log/univpn
       - univpn-run:/run/univpn
     networks:
       - bo-vpn-internal
@@ -40,8 +53,8 @@ services:
       BO_VPN_NSENTER_TIMEOUT_SEC: "8"
       BO_VPN_COMMAND_OUTPUT_MAX_BYTES: "65536"
     volumes:
-      - ./keys/rsa.key:/run/keys/rsa.key:ro
-      - ./univpn/secrets:/run/secrets:ro
+      - /home/timur/univpn/rsa.key:/run/keys/rsa.key:ro
+      - /home/timur/univpn/secret.env:/run/secrets/univpn.env:ro
       - univpn-run:/run/univpn
     restart: unless-stopped
 

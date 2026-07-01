@@ -248,7 +248,7 @@ basic_status: OK
 | Runner env-file | Сделано |
 | Runner healthcheck | Сделано |
 | Проверка worker -> runner | Сделано |
-| Full compose stack | Experimental | Добавлен `docker-compose.full.yml`; реальные image/mounts/control pipe нужно сверить по `docker inspect univpn-service`. |
+| Full compose stack | Experimental | `docker-compose.full.yml` приведён к фактическому `docker inspect univpn-service`; нужен успешный smoke-test. |
 | Runner container без Docker/nsenter | Сделано, mock-tested | Новый режим `container_namespace`. |
 | Managed VPN login через control path | Сделано частично | Login sequence реализован; safe disconnect sequence ещё нужно уточнить. |
 | External bot API contract | Сделано | См. `docs/bot_worker_api.md`. Бот остаётся внешним репозиторием. |

@@ -4,32 +4,50 @@ This document describes the next deployment shape for the confirmed MVP path. It
 
 ## Discovery Status
 
-Fact discovery for the live `univpn-service` still must be completed on the stand because this local workspace cannot inspect the remote Docker daemon.
+Server-side `docker inspect univpn-service` confirmed the current UniVPN container shape:
 
-Run on the server:
-
-```bash
-docker inspect univpn-service > /tmp/univpn-service.inspect.json
-docker inspect univpn-service --format '{{.Config.Image}}'
-docker inspect univpn-service --format '{{json .Config.Entrypoint}} {{json .Config.Cmd}}'
-docker inspect univpn-service --format '{{json .Mounts}}'
-docker inspect univpn-service --format '{{json .Config.Env}}'
-docker inspect univpn-service --format '{{json .HostConfig.CapAdd}} {{json .HostConfig.Devices}} {{json .HostConfig.Privileged}}'
-docker exec univpn-service sh -lc 'ls -l /run /run/univpn /run/univpn.in /run/secrets 2>/dev/null || true'
+```text
+Name=/univpn-service
+Image=local/univpn:10781.16.0.0730
+Entrypoint=null
+NetworkMode=bridge
+Privileged=false
+CapAdd=["CAP_NET_ADMIN"]
+Devices=[/dev/net/tun:/dev/net/tun:rwm]
 ```
 
-Items to confirm:
+Real mounts:
 
-- Current image name and tag.
-- Entrypoint and command.
-- Mounts and required profile paths.
-- Whether `/run/univpn.in` is a regular file, FIFO or another control endpoint.
-- How `/run/secrets/univpn.env` is created and mounted.
-- Whether `/run/univpn.in` can be replaced by a shared volume path such as `/run/univpn/univpn.in`.
-- Whether UniVPN CLI supports a safe disconnect/exit sequence.
-- Whether `NET_ADMIN` plus `/dev/net/tun` is enough, or `privileged` is currently required.
+```text
+/home/timur/univpn/secret.env -> /run/secrets/univpn.env:ro
+/home/timur/univpn/logs -> /var/log/univpn:rw
+/home/timur/univpn/profile -> /home/vpn/UniVPN:rw
+```
 
-Until that discovery is completed, `docker-compose.full.yml` is experimental.
+Real command creates a FIFO at `/run/univpn.in` and runs `UniVPNCS` through `script`:
+
+```bash
+bash -lc '
+    set -e
+    useradd -m vpn >/dev/null 2>&1 || true
+    chown -R vpn:vpn /home/vpn/UniVPN
+    rm -f /run/univpn.in
+    mkfifo /run/univpn.in
+    /usr/local/UniVPN/promote/UniVPNPromoteService >/var/log/univpn/promote.log 2>&1 &
+    cd /usr/local/UniVPN/serviceclient
+    tail -f /run/univpn.in | script -qfec "su - vpn -c /usr/local/UniVPN/serviceclient/UniVPNCS" /var/log/univpn/univpn-console.log
+'
+```
+
+`docker-compose.full.yml` intentionally adapts that command without changing the image: the FIFO is moved to `/run/univpn/univpn.in` so runner can write to it through the shared `univpn-run` volume. The compose file does not mount the whole `/run`; only `/run/univpn` is shared.
+
+Still to confirm on the stand:
+
+- Worker can reach runner through `http://univpn-service:8091` while runner uses `network_mode: "service:univpn-service"`.
+- UniVPN login through `/run/univpn/univpn.in` succeeds with the file-mounted secret.
+- A safe UniVPN disconnect/exit sequence.
+
+Until those smoke-tests pass, `docker-compose.full.yml` remains experimental and must not be treated as production-ready.
 
 ## Current Host-Side Scheme
 
@@ -83,6 +101,7 @@ After starting full compose, compare host `ip route` and `ip addr` before/after 
 | `privileged` is required | Must be justified; prefer `cap_add: [NET_ADMIN]` and `/dev/net/tun`. |
 | Control pipe cannot be safely shared | Compose automation remains incomplete until a wrapper is added. |
 | Disconnect sequence is unknown | `BO_VPN_STOP_VPN_AFTER_TASK=false` by default; cleanup is documented as not fully implemented. |
+| Compose command differs from inspected command | Intentional only for FIFO path relocation from `/run/univpn.in` to `/run/univpn/univpn.in`; image is not changed. |
 
 ## `container_namespace` Runner Mode
 
@@ -151,4 +170,4 @@ Cleanup status:
 - shared `univpn-run` volume for the UniVPN control path
 - internal `bo-vpn-internal` network for worker to reach runner via `http://univpn-service:8091`
 
-The real UniVPN image, profile mount and secret mount must be validated against live `docker inspect univpn-service` before using this as production deployment.
+The UniVPN image, profile mount and secret mount are aligned to the inspected stand paths, but the full stack still requires a successful smoke-test before promotion from experimental status.

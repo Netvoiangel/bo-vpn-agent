@@ -288,6 +288,12 @@ class WorkerServiceTests(unittest.TestCase):
         self.assertEqual(config.univpn_secret_path, Path("/run/secrets/custom.env"))
         self.assertEqual(config.univpn_disconnect_sequence, "q")
 
+    def test_runner_config_defaults_use_shared_univpn_control_and_secret_file(self) -> None:
+        config = RunnerDaemonConfig()
+
+        self.assertEqual(config.univpn_control_path, Path("/run/univpn/univpn.in"))
+        self.assertEqual(config.univpn_secret_path, Path("/run/secrets/univpn.env"))
+
     def test_capabilities_only_contains_mvp_operations(self) -> None:
         with TemporaryDirectory() as raw_tmp:
             service = WorkerService(make_config(Path(raw_tmp)))
@@ -940,6 +946,13 @@ class WorkerServiceTests(unittest.TestCase):
         self.assertIn('"operation": "basic_status"', doc)
         self.assertIn('"runner_mode": "container_namespace"', doc)
         self.assertIn('"mode": "container_secret"', doc)
+
+    def test_compose_design_doc_marks_full_compose_experimental(self) -> None:
+        doc = Path("docs/compose_vpn_runner_design.md").read_text(encoding="utf-8").lower()
+
+        self.assertIn("docker-compose.full.yml", doc)
+        self.assertIn("experimental", doc)
+        self.assertIn("must not be treated as production-ready", doc)
 
 def _runner_config(tmp_path: Path) -> RunnerDaemonConfig:
     return RunnerDaemonConfig(
