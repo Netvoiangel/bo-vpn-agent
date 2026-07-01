@@ -118,6 +118,10 @@ BO_VPN_STOP_VPN_AFTER_TASK=false
 BO_VPN_UNIVPN_CONTROL_PATH=/run/univpn/univpn.in
 BO_VPN_UNIVPN_LOGIN_TIMEOUT_SEC=45
 BO_VPN_UNIVPN_CONNECT_POLL_INTERVAL_SEC=2
+BO_VPN_UNIVPN_LOGIN_AFTER_PROFILE_DELAY_SEC=2
+BO_VPN_UNIVPN_LOGIN_AFTER_CONNECT_DELAY_SEC=4
+BO_VPN_UNIVPN_LOGIN_AFTER_USERNAME_DELAY_SEC=2
+BO_VPN_UNIVPN_POST_LOGIN_WAIT_SEC=12
 BO_VPN_UNIVPN_ROUTE_CIDR=172.26.0.0/15
 BO_VPN_UNIVPN_INTERFACE=cnem_vnic
 BO_VPN_UNIVPN_LOGIN_MODE=container_secret
@@ -151,6 +155,8 @@ In this mode runner-daemon:
 - can write the UniVPN login sequence to `BO_VPN_UNIVPN_CONTROL_PATH` when `BO_VPN_MANAGE_VPN_SESSION=true`.
 
 `BO_VPN_STOP_VPN_AFTER_TASK=false` is the default because the safe UniVPN disconnect sequence still has to be confirmed on the stand. See [docs/compose_vpn_runner_design.md](docs/compose_vpn_runner_design.md).
+
+Managed UniVPN login is intentionally step-by-step for the interactive UniVPNCS menu. Runner logs may show sanitized events such as profile selected, connect selected, username submitted, password submitted and interface/route polling status, but must not include the actual username or password.
 
 ## Vehicle Inventory
 

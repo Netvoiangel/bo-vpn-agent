@@ -156,6 +156,10 @@ BO_VPN_STOP_VPN_AFTER_TASK=false
 BO_VPN_UNIVPN_CONTROL_PATH=/run/univpn/univpn.in
 BO_VPN_UNIVPN_LOGIN_TIMEOUT_SEC=45
 BO_VPN_UNIVPN_CONNECT_POLL_INTERVAL_SEC=2
+BO_VPN_UNIVPN_LOGIN_AFTER_PROFILE_DELAY_SEC=2
+BO_VPN_UNIVPN_LOGIN_AFTER_CONNECT_DELAY_SEC=4
+BO_VPN_UNIVPN_LOGIN_AFTER_USERNAME_DELAY_SEC=2
+BO_VPN_UNIVPN_POST_LOGIN_WAIT_SEC=12
 BO_VPN_UNIVPN_ROUTE_CIDR=172.26.0.0/15
 BO_VPN_UNIVPN_INTERFACE=cnem_vnic
 BO_VPN_UNIVPN_LOGIN_MODE=container_secret
@@ -172,6 +176,18 @@ VPN_PASSWORD from secret
 ```
 
 Secrets are read only inside the runner/UniVPN environment. They are not returned by the worker API and are not written to audit logs.
+
+The managed login writes the sequence step by step because UniVPNCS behaves as an interactive menu:
+
+```text
+write 3, wait BO_VPN_UNIVPN_LOGIN_AFTER_PROFILE_DELAY_SEC
+write 1, wait BO_VPN_UNIVPN_LOGIN_AFTER_CONNECT_DELAY_SEC
+write VPN_USERNAME, wait BO_VPN_UNIVPN_LOGIN_AFTER_USERNAME_DELAY_SEC
+write VPN_PASSWORD, wait BO_VPN_UNIVPN_POST_LOGIN_WAIT_SEC
+poll cnem_vnic and route
+```
+
+Runner debug logs are sanitized. They may show control path existence, secret keys found as booleans, polling attempt number, interface found true/false and route found true/false. They must never include `VPN_USERNAME` or `VPN_PASSWORD` values.
 
 Cleanup status:
 

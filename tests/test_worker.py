@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from bo_vpn_agent import container_namespace_executor as container_executor_module
 from bo_vpn_agent.api import validate_service_headers
 from bo_vpn_agent.command_exec import CommandResult, SubprocessCommandExecutor
 from bo_vpn_agent.config import RunnerDaemonConfig, WorkerConfig
@@ -265,6 +266,10 @@ class WorkerServiceTests(unittest.TestCase):
             "BO_VPN_UNIVPN_LOGIN_MODE": "container_secret",
             "BO_VPN_UNIVPN_SECRET_PATH": "/run/secrets/custom.env",
             "BO_VPN_UNIVPN_DISCONNECT_SEQUENCE": "q",
+            "BO_VPN_UNIVPN_LOGIN_AFTER_PROFILE_DELAY_SEC": "1.5",
+            "BO_VPN_UNIVPN_LOGIN_AFTER_CONNECT_DELAY_SEC": "2.5",
+            "BO_VPN_UNIVPN_LOGIN_AFTER_USERNAME_DELAY_SEC": "3.5",
+            "BO_VPN_UNIVPN_POST_LOGIN_WAIT_SEC": "4.5",
         }
         previous = {key: os.environ.get(key) for key in keys}
         try:
@@ -287,12 +292,20 @@ class WorkerServiceTests(unittest.TestCase):
         self.assertEqual(config.univpn_login_mode, "container_secret")
         self.assertEqual(config.univpn_secret_path, Path("/run/secrets/custom.env"))
         self.assertEqual(config.univpn_disconnect_sequence, "q")
+        self.assertEqual(config.univpn_login_after_profile_delay_sec, 1.5)
+        self.assertEqual(config.univpn_login_after_connect_delay_sec, 2.5)
+        self.assertEqual(config.univpn_login_after_username_delay_sec, 3.5)
+        self.assertEqual(config.univpn_post_login_wait_sec, 4.5)
 
     def test_runner_config_defaults_use_shared_univpn_control_and_secret_file(self) -> None:
         config = RunnerDaemonConfig()
 
         self.assertEqual(config.univpn_control_path, Path("/run/univpn/univpn.in"))
         self.assertEqual(config.univpn_secret_path, Path("/run/secrets/univpn.env"))
+        self.assertEqual(config.univpn_login_after_profile_delay_sec, 2)
+        self.assertEqual(config.univpn_login_after_connect_delay_sec, 4)
+        self.assertEqual(config.univpn_login_after_username_delay_sec, 2)
+        self.assertEqual(config.univpn_post_login_wait_sec, 12)
 
     def test_capabilities_only_contains_mvp_operations(self) -> None:
         with TemporaryDirectory() as raw_tmp:
@@ -808,6 +821,93 @@ class WorkerServiceTests(unittest.TestCase):
             self.assertNotIn("stand-password", body)
             self.assertNotIn("stand-user", body)
 
+    def test_container_namespace_managed_login_sleeps_between_steps(self) -> None:
+        with TemporaryDirectory() as raw_tmp:
+            tmp_path = Path(raw_tmp)
+            secret_path = tmp_path / "univpn.env"
+            control_path = tmp_path / "univpn.in"
+            secret_path.write_text("VPN_USERNAME=stand-user\nVPN_PASSWORD=stand-password\n", encoding="utf-8")
+            executor = FakeCommandExecutor(
+                [
+                    command_result(stderr='Device "cnem_vnic" does not exist.', returncode=1),
+                    *_container_preflight_success(),
+                    command_result(stdout='{"22":"open","443":"closed","80":"closed"}\n'),
+                ]
+            )
+            delays: list[float] = []
+            original_sleep = container_executor_module._sleep
+            container_executor_module._sleep = delays.append
+            try:
+                service = RunnerDaemonService(
+                    _container_runner_config(
+                        tmp_path,
+                        manage_vpn_session=True,
+                        univpn_secret_path=secret_path,
+                        univpn_control_path=control_path,
+                        univpn_login_timeout_sec=10,
+                        univpn_connect_poll_interval_sec=9,
+                        univpn_login_after_profile_delay_sec=1.5,
+                        univpn_login_after_connect_delay_sec=2.5,
+                        univpn_login_after_username_delay_sec=3.5,
+                        univpn_post_login_wait_sec=4.5,
+                    ),
+                    command_executor=executor,
+                )
+                _, created = service.create_job(
+                    _runner_job_payload(operation="vehicle_reachability", runner_mode="container_namespace", vpn_mode="container_secret")
+                )
+                result = wait_for_job_terminal(service, created["job_id"])
+            finally:
+                container_executor_module._sleep = original_sleep
+
+            self.assertEqual(result["state"], "finished")
+            self.assertEqual(control_path.read_text(encoding="utf-8"), "3\n1\nstand-user\nstand-password\n")
+            self.assertEqual(delays, [1.5, 2.5, 3.5, 4.5])
+
+    def test_container_namespace_managed_login_logs_are_sanitized(self) -> None:
+        with TemporaryDirectory() as raw_tmp:
+            tmp_path = Path(raw_tmp)
+            secret_path = tmp_path / "univpn.env"
+            control_path = tmp_path / "univpn.in"
+            secret_path.write_text("VPN_USERNAME=stand-user\nVPN_PASSWORD=stand-password\n", encoding="utf-8")
+            executor = FakeCommandExecutor(
+                [
+                    command_result(stderr='Device "cnem_vnic" does not exist.', returncode=1),
+                    *_container_preflight_success(),
+                    command_result(stdout='{"22":"open","443":"closed","80":"closed"}\n'),
+                ]
+            )
+            service = RunnerDaemonService(
+                _container_runner_config(
+                    tmp_path,
+                    manage_vpn_session=True,
+                    univpn_secret_path=secret_path,
+                    univpn_control_path=control_path,
+                    univpn_login_timeout_sec=0,
+                    univpn_connect_poll_interval_sec=0,
+                ),
+                command_executor=executor,
+            )
+
+            with self.assertLogs("bo_vpn_agent.container_namespace_executor", level="INFO") as captured:
+                _, created = service.create_job(
+                    _runner_job_payload(operation="vehicle_reachability", runner_mode="container_namespace", vpn_mode="container_secret")
+                )
+                result = wait_for_job_terminal(service, created["job_id"])
+
+            logs = "\n".join(captured.output)
+            body = json.dumps(result, ensure_ascii=False)
+            self.assertEqual(result["state"], "finished")
+            self.assertIn("univpn login: profile selected", logs)
+            self.assertIn("univpn login: connect selected", logs)
+            self.assertIn("univpn login: username submitted", logs)
+            self.assertIn("univpn login: password submitted", logs)
+            self.assertIn("univpn login: waiting for interface and route", logs)
+            self.assertNotIn("stand-user", logs)
+            self.assertNotIn("stand-password", logs)
+            self.assertNotIn("stand-user", body)
+            self.assertNotIn("stand-password", body)
+
     def test_container_namespace_skips_login_when_already_connected(self) -> None:
         with TemporaryDirectory() as raw_tmp:
             tmp_path = Path(raw_tmp)
@@ -996,6 +1096,10 @@ def _container_runner_config(
     univpn_login_timeout_sec: int = 45,
     univpn_connect_poll_interval_sec: float = 0,
     univpn_disconnect_sequence: str | None = None,
+    univpn_login_after_profile_delay_sec: float = 0,
+    univpn_login_after_connect_delay_sec: float = 0,
+    univpn_login_after_username_delay_sec: float = 0,
+    univpn_post_login_wait_sec: float = 0,
 ) -> RunnerDaemonConfig:
     return RunnerDaemonConfig(
         artifact_dir=tmp_path / "runner-artifacts",
@@ -1012,6 +1116,10 @@ def _container_runner_config(
         univpn_login_timeout_sec=univpn_login_timeout_sec,
         univpn_connect_poll_interval_sec=univpn_connect_poll_interval_sec,
         univpn_disconnect_sequence=univpn_disconnect_sequence,
+        univpn_login_after_profile_delay_sec=univpn_login_after_profile_delay_sec,
+        univpn_login_after_connect_delay_sec=univpn_login_after_connect_delay_sec,
+        univpn_login_after_username_delay_sec=univpn_login_after_username_delay_sec,
+        univpn_post_login_wait_sec=univpn_post_login_wait_sec,
     )
 
 

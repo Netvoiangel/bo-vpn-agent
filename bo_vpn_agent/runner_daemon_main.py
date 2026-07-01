@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import argparse
+import logging
 
 from .config import RunnerDaemonConfig
 from .runner_daemon import run_runner_daemon
 
 
 def main() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     parser = argparse.ArgumentParser(description="BO/VPN runner-daemon skeleton")
     parser.add_argument("--host", default=None, help="HTTP bind host")
     parser.add_argument("--port", default=None, type=int, help="HTTP bind port")

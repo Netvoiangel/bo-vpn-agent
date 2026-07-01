@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from dataclasses import dataclass
 
@@ -9,6 +10,9 @@ from .config import RunnerDaemonConfig
 from .existing_container_executor import TCP_PORTS, _parse_basic_status, _tcp_probe_script
 from .models import Task, VpnCredentials
 from .runner import RunnerFailure, RunnerResult, StateCallback
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -51,7 +55,7 @@ class ContainerNamespaceExecutor:
                 warnings.extend(cleanup_warnings)
 
     def _ensure_vpn_connected(self, vpn: VpnCredentials) -> None:
-        if self._is_connected():
+        if self._is_connected(log_attempt=True, attempt=0):
             return
         if not self.config.manage_vpn_session:
             raise RunnerFailure(
@@ -60,24 +64,38 @@ class ContainerNamespaceExecutor:
             )
         self._login(vpn)
         deadline = time.monotonic() + self.config.univpn_login_timeout_sec
+        attempt = 1
+        LOGGER.info("univpn login: waiting for interface and route")
         while True:
-            if self._is_connected():
+            if self._is_connected(log_attempt=True, attempt=attempt):
                 return
             if time.monotonic() >= deadline:
                 raise RunnerFailure(
                     "vpn_client_error",
                     f"UniVPN login не дал интерфейс {self.config.univpn_interface} и маршрут {self.config.univpn_route_cidr}",
                 )
-            time.sleep(self.config.univpn_connect_poll_interval_sec)
+            _sleep(self.config.univpn_connect_poll_interval_sec)
+            attempt += 1
 
-    def _is_connected(self) -> bool:
+    def _is_connected(self, log_attempt: bool = False, attempt: int | None = None) -> bool:
+        interface_found = False
+        route_found = False
         addr = self.command_executor.run(
             ["ip", "-br", "addr", "show", self.config.univpn_interface],
             timeout_sec=self.config.nsenter_timeout_sec,
         )
         if addr.timed_out:
             raise RunnerFailure("operation_timeout", f"VPN preflight: проверка {self.config.univpn_interface} превысила timeout")
-        if addr.returncode != 0 or self.config.univpn_interface not in addr.stdout:
+        if addr.returncode == 0 and self.config.univpn_interface in addr.stdout:
+            interface_found = True
+        if not interface_found:
+            if log_attempt:
+                LOGGER.info(
+                    "univpn preflight: poll attempt=%s interface_found=%s route_found=%s",
+                    attempt,
+                    interface_found,
+                    route_found,
+                )
             return False
 
         routes = self.command_executor.run(["ip", "route"], timeout_sec=self.config.nsenter_timeout_sec)
@@ -85,11 +103,37 @@ class ContainerNamespaceExecutor:
             raise RunnerFailure("operation_timeout", "VPN preflight: проверка маршрутов превысила timeout")
         if routes.returncode != 0:
             raise RunnerFailure("vpn_client_error", "VPN preflight: не удалось получить маршруты")
-        return self.config.univpn_route_cidr in routes.stdout
+        route_found = self.config.univpn_route_cidr in routes.stdout
+        if log_attempt:
+            LOGGER.info(
+                "univpn preflight: poll attempt=%s interface_found=%s route_found=%s",
+                attempt,
+                interface_found,
+                route_found,
+            )
+        return route_found
 
     def _login(self, vpn: VpnCredentials) -> None:
         username, password = self._credentials(vpn)
-        self._write_control_sequence(["3", "1", username, password])
+        LOGGER.info("univpn login: control_path_exists=%s", self.config.univpn_control_path.exists())
+        try:
+            self._write_control_line("3")
+            LOGGER.info("univpn login: profile selected")
+            _sleep(self.config.univpn_login_after_profile_delay_sec)
+
+            self._write_control_line("1")
+            LOGGER.info("univpn login: connect selected")
+            _sleep(self.config.univpn_login_after_connect_delay_sec)
+
+            self._write_control_line(username)
+            LOGGER.info("univpn login: username submitted")
+            _sleep(self.config.univpn_login_after_username_delay_sec)
+
+            self._write_control_line(password)
+            LOGGER.info("univpn login: password submitted")
+            _sleep(self.config.univpn_post_login_wait_sec)
+        except OSError as exc:
+            raise RunnerFailure("vpn_client_error", "UniVPN control FIFO недоступен для managed login") from exc
 
     def _credentials(self, vpn: VpnCredentials) -> tuple[str, str]:
         if vpn.mode == "inline_once":
@@ -106,6 +150,7 @@ class ContainerNamespaceExecutor:
         password = secrets.get("VPN_PASSWORD", "")
         if not username or not password:
             raise RunnerFailure("vpn_client_error", "UniVPN secret file не содержит VPN_USERNAME/VPN_PASSWORD")
+        LOGGER.info("univpn login: secret keys found username=%s password=%s", bool(username), bool(password))
         return username, password
 
     def _vehicle_reachability(self, task: Task) -> RunnerResult:
@@ -175,6 +220,12 @@ class ContainerNamespaceExecutor:
         with self.config.univpn_control_path.open("a", encoding="utf-8") as stream:
             stream.write(payload)
 
+    def _write_control_line(self, line: str) -> None:
+        self.config.univpn_control_path.parent.mkdir(parents=True, exist_ok=True)
+        with self.config.univpn_control_path.open("a", encoding="utf-8") as stream:
+            stream.write(f"{line}\n")
+            stream.flush()
+
 
 def _read_env_file(path: object) -> dict[str, str]:
     result: dict[str, str] = {}
@@ -186,3 +237,7 @@ def _read_env_file(path: object) -> dict[str, str]:
             key, value = line.split("=", 1)
             result[key.strip()] = value.strip().strip('"').strip("'")
     return result
+
+
+def _sleep(seconds: float) -> None:
+    time.sleep(seconds)

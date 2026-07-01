@@ -252,6 +252,7 @@ basic_status: OK
 | Full compose secret logging hardening | Сделано | UniVPN console session discarded to `/dev/null`; old unsafe logs must be treated as credential exposure. |
 | Runner container без Docker/nsenter | Сделано, mock-tested | Новый режим `container_namespace`. |
 | Managed VPN login через control path | Сделано частично | Login sequence реализован; safe disconnect sequence ещё нужно уточнить. |
+| Managed UniVPN staged login delays | Сделано | Для `container_namespace` ввод в FIFO выполняется пошагово с configurable delays и sanitized runner logs. |
 | External bot API contract | Сделано | См. `docs/bot_worker_api.md`. Бот остаётся внешним репозиторием. |
 | Runner auth/firewall | Не сделано |
 | Production deployment layout `/opt` | Не сделано |

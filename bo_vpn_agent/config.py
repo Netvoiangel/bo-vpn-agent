@@ -71,6 +71,10 @@ class RunnerDaemonConfig:
     univpn_login_mode: str = "container_secret"
     univpn_secret_path: Path = Path("/run/secrets/univpn.env")
     univpn_disconnect_sequence: str | None = None
+    univpn_login_after_profile_delay_sec: float = 2.0
+    univpn_login_after_connect_delay_sec: float = 4.0
+    univpn_login_after_username_delay_sec: float = 2.0
+    univpn_post_login_wait_sec: float = 12.0
     artifact_dir: Path = Path("var/runner-artifacts")
     artifact_ttl_hours: int = 24
     max_artifact_bytes: int = 10 * 1024 * 1024
@@ -99,6 +103,10 @@ class RunnerDaemonConfig:
             univpn_login_mode=os.getenv("BO_VPN_UNIVPN_LOGIN_MODE", "container_secret"),
             univpn_secret_path=Path(os.getenv("BO_VPN_UNIVPN_SECRET_PATH", "/run/secrets/univpn.env")),
             univpn_disconnect_sequence=os.getenv("BO_VPN_UNIVPN_DISCONNECT_SEQUENCE"),
+            univpn_login_after_profile_delay_sec=float(os.getenv("BO_VPN_UNIVPN_LOGIN_AFTER_PROFILE_DELAY_SEC", "2")),
+            univpn_login_after_connect_delay_sec=float(os.getenv("BO_VPN_UNIVPN_LOGIN_AFTER_CONNECT_DELAY_SEC", "4")),
+            univpn_login_after_username_delay_sec=float(os.getenv("BO_VPN_UNIVPN_LOGIN_AFTER_USERNAME_DELAY_SEC", "2")),
+            univpn_post_login_wait_sec=float(os.getenv("BO_VPN_UNIVPN_POST_LOGIN_WAIT_SEC", "12")),
             artifact_dir=Path(os.getenv("BO_VPN_RUNNER_ARTIFACT_DIR", "var/runner-artifacts")),
             artifact_ttl_hours=int(os.getenv("BO_VPN_ARTIFACT_TTL_HOURS", "24")),
             max_artifact_bytes=int(os.getenv("BO_VPN_MAX_ARTIFACT_BYTES", str(10 * 1024 * 1024))),
