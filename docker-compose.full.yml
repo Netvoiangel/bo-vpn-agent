@@ -25,7 +25,14 @@ services:
       - univpn-run:/run/univpn
     networks:
       - bo-vpn-internal
+    ports:
+      - "127.0.0.1:18080:18080"
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   bo-vpn-runner:
     build:
@@ -85,6 +92,63 @@ services:
     networks:
       - bo-vpn-internal
     restart: unless-stopped
+
+  vpn-tcp-proxy:
+    profiles:
+      - audio
+    image: bo-vpn-agent-bo-vpn-runner:latest
+    container_name: bo-vpn-tcp-proxy
+    network_mode: "service:univpn-service"
+    depends_on:
+      - univpn-service
+    command:
+      - python
+      - -m
+      - bo_vpn_agent.tcp_proxy
+    environment:
+      VPN_TCP_PROXY_HOST: "0.0.0.0"
+      VPN_TCP_PROXY_PORT: "18080"
+    volumes:
+      - ./bo_vpn_agent/tcp_proxy.py:/app/bo_vpn_agent/tcp_proxy.py:ro
+    restart: unless-stopped
+
+  audio-bot:
+    profiles:
+      - audio
+    build:
+      context: .
+      dockerfile: Dockerfile.bot
+    container_name: bo-audio-bot
+    depends_on:
+      - univpn-service
+      - bo-vpn-runner
+      - bo-vpn-worker
+      - vpn-tcp-proxy
+    env_file:
+      - path: /home/timur/univpn/telegram-bot.env
+        required: false
+    environment:
+      BO_VPN_WORKER_URL: "http://127.0.0.1:8000"
+      BO_VPN_WORKER_AUTH_TOKEN: "dev-token"
+      BO_SSH_KEY: "/run/keys/rsa.key"
+      BO_KNOWN_HOSTS_FILE: "/data/known_hosts"
+      BO_SSH_PROXY_COMMAND: "/app/scripts/proxy_connect.py 127.0.0.1 18080 %h %p"
+      AUDIO_SCRIPT: "/app/scripts/play_vehicle_audio.sh"
+      AUDIO_TMP_DIR: "/tmp/audio-bot"
+      VEHICLE_MAP_PATH: "/app/config/vehicle_ip_map.csv"
+      VEHICLE_MAP_PATHS: "piteravto=/app/config/vehicle_ip_map.csv,pat=/app/config/pat_vehicle_ip_map.csv"
+      VEHICLE_DEFAULT_BRANCH: "piteravto"
+    volumes:
+      - /home/timur/univpn/rsa.key:/run/keys/rsa.key:ro
+      - /home/timur/univpn/bot-data:/data
+      - ./config:/app/config:ro
+    network_mode: host
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 networks:
   bo-vpn-internal:

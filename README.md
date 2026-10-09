@@ -32,6 +32,50 @@ Not implemented yet:
 
 Current summary: implemented MVP worker control plane and runner boundary; implemented `existing_container` execution in code; pending real smoke-test on the UniVPN stand and `job_container` execution.
 
+## Experimental Telegram audio bot
+
+The optional `audio-bot` Compose profile accepts Telegram voice messages and
+MP3 files, checks UniVPN/vehicle reachability through the existing worker, and
+plays audio on an MNT ALSA output over SSH. The bot stays in the normal Docker
+network so Telegram remains reachable. SSH/SCP traffic uses the internal
+`vpn-tcp-proxy`, which shares only the UniVPN network namespace.
+
+Create a local secret file outside the repository:
+
+```bash
+cp telegram-bot.env.example /home/timur/univpn/telegram-bot.env
+chmod 600 /home/timur/univpn/telegram-bot.env
+```
+
+Set `TELEGRAM_BOT_TOKEN` and comma-separated numeric
+`TELEGRAM_ALLOWED_USER_IDS`. On the current server, also copy the existing
+`HTTP_PROXY`/`HTTPS_PROXY` values used by the other Telegram bots and keep
+`NO_PROXY=bo-vpn-worker,univpn-service,127.0.0.1,localhost`. Then start the
+experimental profile:
+
+```bash
+mkdir -p /home/timur/univpn/bot-data
+docker compose -f docker-compose.full.yml --profile audio up -d --build
+docker compose -f docker-compose.full.yml logs -f audio-bot
+```
+
+Bot commands:
+
+```text
+/target 10192 25 salon
+/status
+/stop
+```
+
+The same actions are available as a persistent Telegram reply keyboard:
+`Выбрать ТС`, `Статус`, and `Стоп`. Selecting a vehicle prompts for either a
+number alone or `number volume channel`.
+
+The bot resolves the vehicle number through the read-only
+`config/vehicle_ip_map.csv` mapping (`vehicle_number,ip`). After `/target`, send
+a Telegram voice message or an MP3. The bot removes the local download and the
+remote MNT temporary files after completion or `/stop`.
+
 ## MVP API
 
 Implemented endpoints:

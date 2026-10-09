@@ -1,0 +1,17 @@
+FROM bo-vpn-agent-bo-vpn-runner:latest
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY bo_vpn_agent ./bo_vpn_agent
+COPY scripts/play_vehicle_audio.sh ./scripts/play_vehicle_audio.sh
+COPY scripts/proxy_connect.py ./scripts/proxy_connect.py
+RUN chmod +x ./scripts/play_vehicle_audio.sh ./scripts/proxy_connect.py
+
+CMD ["python", "-m", "bo_vpn_agent.telegram_audio_bot"]
