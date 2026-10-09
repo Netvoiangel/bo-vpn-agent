@@ -25,6 +25,18 @@ Endpoints used by the bot:
 - `POST /tasks`
 - `GET /tasks/{task_id}`
 
+## Recommended Deployment Mode
+
+The verified MVP deployment for the external bot is full-compose:
+
+```text
+docker-compose.full.yml
+runner_mode=container_namespace
+vpn.mode=container_secret
+```
+
+In this mode the bot sends only worker API requests. It does not receive or handle UniVPN credentials; credentials stay mounted inside the runner/UniVPN environment.
+
 ## Health
 
 ```bash
@@ -130,6 +142,20 @@ curl -sS -X POST http://127.0.0.1:8000/tasks \
 curl -sS http://127.0.0.1:8000/tasks/<task_id> \
   -H 'Authorization: Bearer dev-token' \
   -H 'X-Request-Id: get-task-001'
+```
+
+Example polling loop until terminal state:
+
+```bash
+TASK_ID=<task_id>
+
+for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do
+  curl -sS "http://127.0.0.1:8000/tasks/${TASK_ID}" \
+    -H 'Authorization: Bearer dev-token' \
+    -H "X-Request-Id: poll-${i}"
+  echo
+  sleep 2
+done
 ```
 
 Recommended bot polling:

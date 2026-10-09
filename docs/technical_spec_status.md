@@ -9,8 +9,8 @@
 ```text
 ТЗ в целом: выполнено примерно 35-45%
 MVP control plane: выполнено примерно 75-85%
-Стендовый existing_container MVP: выполнено примерно 65-75%
-Compose/container_namespace MVP: выполнено примерно 30-40%, experimental
+Стендовый existing_container MVP: выполнено примерно 70-80%
+Compose/container_namespace MVP: выполнено примерно 60-70%, verified for vehicle_reachability
 Целевая job_container-модель: выполнено примерно 10-15%
 ```
 
@@ -24,12 +24,36 @@ Dockerized worker
         -> BO/ТС
 ```
 
+И рабочая full-compose вертикаль:
+
+```text
+Telegram bot / API client
+  -> Dockerized worker
+    -> runner container
+      -> shared UniVPN namespace
+        -> BO/ТС
+```
+
 Подтверждено на реальной ТС:
 
 ```text
 6217 / 172.26.129.119
 vehicle_reachability: OK
 basic_status: OK
+```
+
+Подтверждено через full-compose:
+
+```text
+192.168.10.50
+runner_mode=container_namespace
+vpn.mode=container_secret
+vehicle.ip=172.26.129.179
+vehicle_reachability: OK
+duration_sec=20
+tcp_22=open
+tcp_443=open
+tcp_80=closed
 ```
 
 ## 1. Назначение и границы ответственности
@@ -52,9 +76,9 @@ basic_status: OK
 | `vpn runner` | Сделано частично | Есть runner-daemon, systemd service, existing_container execution. |
 | `existing_container` режим | Подтверждено | Проверен на стенде через `univpn-service`. |
 | `job_container` режим | Placeholder | Есть boundary/placeholder, реального запуска job-контейнера пока нет. |
-| `container_namespace` режим | Сделано, experimental | Runner работает внутри shared namespace с `univpn-service`, без Docker и `nsenter`. Требует stand smoke-test. |
+| `container_namespace` режим | Подтверждено | Runner работает внутри shared namespace с `univpn-service`, без Docker и `nsenter`; `vehicle_reachability` подтверждён на стенде. |
 | Одноразовая VPN-сессия на задачу | Не сделано | В стендовом режиме используется уже поднятый `univpn-service`. |
-| Managed VPN session | Сделано частично | Для `container_namespace` добавлен login через control path и preflight wait. Safe disconnect пока требует подтверждения UniVPN exit sequence. |
+| Managed VPN session | Подтверждено частично | Login через control path подтверждён в full-compose; safe disconnect пока требует подтверждения UniVPN exit sequence. |
 | Cleanup одноразового контейнера | Не сделано | Актуально для будущего `job_container`. |
 
 Вывод: стендовый режим работает, целевая модель с одноразовым job-контейнером ещё впереди.
@@ -248,12 +272,12 @@ basic_status: OK
 | Runner env-file | Сделано |
 | Runner healthcheck | Сделано |
 | Проверка worker -> runner | Сделано |
-| Full compose stack | Experimental | `docker-compose.full.yml` приведён к фактическому `docker inspect univpn-service`; нужен успешный smoke-test. |
+| Full compose stack | Verified MVP | `docker-compose.full.yml` проверен на сервере для `vehicle_reachability` через `container_namespace`. |
 | Full compose secret logging hardening | Сделано | UniVPN console session discarded to `/dev/null`; old unsafe logs must be treated as credential exposure. |
-| Runner container без Docker/nsenter | Сделано, mock-tested | Новый режим `container_namespace`. |
-| Managed VPN login через control path | Сделано частично | Login sequence реализован; safe disconnect sequence ещё нужно уточнить. |
+| Runner container без Docker/nsenter | Подтверждено | Новый режим `container_namespace`; проверен на стенде. |
+| Managed VPN login через control path | Подтверждено | Login sequence через FIFO с задержками работает в full-compose; safe disconnect sequence ещё нужно уточнить. |
 | Managed UniVPN staged login delays | Сделано | Для `container_namespace` ввод в FIFO выполняется пошагово с configurable delays и sanitized runner logs. |
-| External bot API contract | Сделано | См. `docs/bot_worker_api.md`. Бот остаётся внешним репозиторием. |
+| External bot API contract | Ready | См. `docs/bot_worker_api.md`. Бот остаётся внешним репозиторием и может работать через worker API. |
 | Runner auth/firewall | Не сделано |
 | Production deployment layout `/opt` | Не сделано |
 
@@ -275,6 +299,70 @@ basic_status: OK
 | Реализация бота в этом репозитории | Не требуется | Бот живёт в отдельном репозитории. |
 
 Вывод: backend-часть worker-а работает, пользовательский сценарий через Telegram ещё не реализован.
+
+### Готовность к интеграции внешнего Telegram-бота
+
+```text
+Интеграция бота с worker API:        85-90%
+Автономный full-compose deployment:  75-80%
+Полное закрытие ТЗ:                  55-65%
+```
+
+Для внешнего бота готов HTTP-контракт:
+
+```text
+POST /tasks
+GET /tasks/{task_id}
+GET /vehicles/resolve
+GET /capabilities
+GET /health
+```
+
+Рекомендуемый режим для первого MVP-релиза бота:
+
+```json
+{
+  "vpn": {
+    "mode": "container_secret"
+  },
+  "runner_mode": "container_namespace"
+}
+```
+
+Разрешённые команды бота на текущем этапе:
+
+```text
+/check <vehicle_id_or_ip>  -> vehicle_reachability
+/basic <vehicle_id_or_ip>  -> basic_status
+/status <task_id>          -> polling статуса
+```
+
+Бот должен обрабатывать:
+
+```text
+409 worker_busy -> Worker занят другой диагностикой. Повторите запрос позже.
+```
+
+Для первой интеграции inventory использовать аккуратно:
+
+```text
+/check 172.26.129.179  -> прямой IP
+/check 81006217        -> lookup через inventory, если запись актуальна
+```
+
+Открытые пункты перед реальной эксплуатацией:
+
+```text
+1. Зафиксировать host routing после успешного full-compose login:
+   - host: нет cnem_vnic и нет route 172.26.0.0/15 через cnem_vnic;
+   - inside univpn-service: есть cnem_vnic и route 172.26.0.0/15.
+2. Определить safe disconnect policy:
+   - q -> disconnect;
+   - или docker compose stop univpn-service;
+   - или keep-alive session между задачами.
+3. Исправить семантику inventory export, где garage_number сейчас похож на индекс строки.
+4. Оставить single-task режим как MVP-ограничение и корректно показывать worker_busy пользователю.
+```
 
 ## 15. Что уже можно считать выполненным
 
@@ -303,8 +391,26 @@ basic_status: OK
 22. `vehicle_reachability` через resolved IP подтверждён на сервере.
 23. `container_namespace` runner mode без Docker/nsenter.
 24. Managed VPN login hook через UniVPN control path.
-25. Experimental full compose deployment.
-26. HTTP contract для внешнего Telegram-бота.
+25. Full-compose deployment verified for `vehicle_reachability`.
+26. Managed UniVPN login verified in full-compose.
+27. Secret logging hardening verified in full-compose.
+28. HTTP contract для внешнего Telegram-бота готов к интеграции.
+```
+
+Full-compose smoke result:
+
+```text
+task_id = 3b7a19ab-37b7-48f0-969d-3569eb6d59b2
+runner_mode = container_namespace
+vpn.mode = container_secret
+operation = vehicle_reachability
+vehicle.ip = 172.26.129.179
+state = finished
+duration_sec = 20
+summary = ТС доступно через UniVPN container namespace
+tcp_22 = open
+tcp_443 = open
+tcp_80 = closed
 ```
 
 ### File-based vehicle inventory: стендовый статус
@@ -383,14 +489,14 @@ Operational note:
 ## 17. Что осталось до целевого MVP по изначальному ТЗ
 
 ```text
-1. Stand discovery текущего univpn-service через docker inspect.
-2. Stand smoke-test full compose / container_namespace.
-3. Подтвердить safe UniVPN disconnect sequence.
-4. Реальный job_container runner.
-5. Передача inline_once VPN-секретов в job-контейнер.
-6. Проверка auth failure / vpn timeout / vpn interactive required.
-7. Cleanup job-контейнера после success/failed/timeout.
-8. Artifact storage и download API.
+1. Финально подтвердить host routing isolation после full-compose login.
+2. Подтвердить safe UniVPN disconnect sequence.
+3. Реальный job_container runner.
+4. Передача inline_once VPN-секретов в job-контейнер.
+5. Проверка auth failure / vpn timeout / vpn interactive required.
+6. Cleanup job-контейнера после success/failed/timeout.
+7. validators_status read-only.
+8. collect_bundle_light и artifact storage/download API.
 9. Persistent storage задач/idempotency.
 10. Интеграция с Telegram-ботом во внешнем репозитории.
 11. Production-источник номер ТС -> IP: внешний inventory service или bot-side resolver вместо file-based MVP.

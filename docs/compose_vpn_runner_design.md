@@ -41,13 +41,19 @@ bash -lc '
 
 `docker-compose.full.yml` intentionally adapts that command without changing the image: the FIFO is moved to `/run/univpn/univpn.in` so runner can write to it through the shared `univpn-run` volume. The compose file does not mount the whole `/run`; only `/run/univpn` is shared.
 
-Still to confirm on the stand:
+Verified on the stand:
 
 - Worker can reach runner through `http://univpn-service:8091` while runner uses `network_mode: "service:univpn-service"`.
 - UniVPN login through `/run/univpn/univpn.in` succeeds with the file-mounted secret.
-- A safe UniVPN disconnect/exit sequence.
+- `vehicle_reachability` succeeds through `container_namespace`.
+- Secret logging hardening keeps the UniVPN console transcript discarded.
 
-Until those smoke-tests pass, `docker-compose.full.yml` remains experimental and must not be treated as production-ready.
+Still to confirm:
+
+- A safe UniVPN disconnect/exit sequence.
+- Host route isolation after each compose run: host must not have `cnem_vnic` or route `172.26.0.0/15` through `cnem_vnic`; the route/interface must exist only inside `univpn-service`.
+
+`docker-compose.full.yml` is verified MVP deployment for `vehicle_reachability`, not a production-final deployment.
 
 ## Secret Logging Hardening
 
@@ -198,7 +204,7 @@ Cleanup status:
 
 ## Full Compose File
 
-`docker-compose.full.yml` provides an experimental full stack:
+`docker-compose.full.yml` provides the verified full-compose MVP stack for `vehicle_reachability`:
 
 - `univpn-service`
 - `bo-vpn-runner`
@@ -206,4 +212,25 @@ Cleanup status:
 - shared `univpn-run` volume for the UniVPN control path
 - internal `bo-vpn-internal` network for worker to reach runner via `http://univpn-service:8091`
 
-The UniVPN image, profile mount and secret mount are aligned to the inspected stand paths, but the full stack still requires a successful smoke-test before promotion from experimental status.
+Verified smoke-test:
+
+```text
+Server: 192.168.10.50
+runner_mode: container_namespace
+vpn.mode: container_secret
+operation: vehicle_reachability
+vehicle.ip: 172.26.129.179
+task_id: 3b7a19ab-37b7-48f0-969d-3569eb6d59b2
+state: finished
+duration_sec: 20
+summary: ТС доступно через UniVPN container namespace
+tcp_22: open
+tcp_443: open
+tcp_80: closed
+```
+
+Limitations:
+
+- Safe disconnect is not finalized.
+- `BO_VPN_STOP_VPN_AFTER_TASK=false`.
+- No new diagnostic operations were added.
