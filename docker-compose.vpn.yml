@@ -1,0 +1,140 @@
+services:
+  univpn-service:
+    image: ${UNIVPN_IMAGE:-local/univpn:10781.16.0.0730}
+    container_name: univpn-service
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    command:
+      - bash
+      - -lc
+      - |
+        set -e
+        useradd -m vpn >/dev/null 2>&1 || true
+        chown -R vpn:vpn /home/vpn/UniVPN
+        rm -f /run/univpn/univpn.in
+        mkfifo /run/univpn/univpn.in
+        /usr/local/UniVPN/promote/UniVPNPromoteService >/var/log/univpn/promote.log 2>&1 &
+        cd /usr/local/UniVPN/serviceclient
+        tail -f /run/univpn/univpn.in | script -qfec "su - vpn -c /usr/local/UniVPN/serviceclient/UniVPNCS" /dev/null >/dev/null 2>&1
+    volumes:
+      - ${UNIVPN_PROFILE_DIR:-/opt/univpn/profile}:/home/vpn/UniVPN
+      - ${UNIVPN_SECRET_FILE:-/opt/univpn/secret.env}:/run/secrets/univpn.env:ro
+      - ${UNIVPN_LOGS_DIR:-/opt/univpn/logs}:/var/log/univpn
+      - univpn-run:/run/univpn
+    networks:
+      - bo-vpn-internal
+    ports:
+      - "127.0.0.1:${VPN_TCP_PROXY_PORT:-18080}:18080"
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  bo-vpn-runner:
+    build:
+      context: .
+      dockerfile: Dockerfile.runner
+    image: bo-vpn-runner:latest
+    container_name: bo-vpn-runner
+    network_mode: "service:univpn-service"
+    depends_on:
+      - univpn-service
+    environment:
+      BO_VPN_RUNNER_HOST: "0.0.0.0"
+      BO_VPN_RUNNER_PORT: "8091"
+      BO_VPN_MANAGE_VPN_SESSION: "true"
+      BO_VPN_STOP_VPN_AFTER_TASK: "false"
+      BO_VPN_UNIVPN_CONTROL_PATH: "/run/univpn/univpn.in"
+      BO_VPN_UNIVPN_LOGIN_TIMEOUT_SEC: "45"
+      BO_VPN_UNIVPN_CONNECT_POLL_INTERVAL_SEC: "2"
+      BO_VPN_UNIVPN_LOGIN_AFTER_PROFILE_DELAY_SEC: "2"
+      BO_VPN_UNIVPN_LOGIN_AFTER_CONNECT_DELAY_SEC: "4"
+      BO_VPN_UNIVPN_LOGIN_AFTER_USERNAME_DELAY_SEC: "2"
+      BO_VPN_UNIVPN_POST_LOGIN_WAIT_SEC: "12"
+      BO_VPN_UNIVPN_ROUTE_CIDR: "172.26.0.0/15"
+      BO_VPN_UNIVPN_INTERFACE: "cnem_vnic"
+      BO_VPN_UNIVPN_LOGIN_MODE: "container_secret"
+      BO_VPN_UNIVPN_SECRET_PATH: "/run/secrets/univpn.env"
+      BO_VPN_SSH_BIN: "/usr/bin/ssh"
+      BO_VPN_SSH_KEY_PATH: "/run/keys/rsa.key"
+      BO_VPN_DEFAULT_SSH_USER: "${BO_VPN_DEFAULT_SSH_USER:-root}"
+      BO_VPN_NSENTER_TIMEOUT_SEC: "8"
+      BO_VPN_COMMAND_OUTPUT_MAX_BYTES: "65536"
+    volumes:
+      - ${BO_VPN_SSH_KEY_PATH:-/opt/univpn/rsa.key}:/run/keys/rsa.key:ro
+      - ${UNIVPN_SECRET_FILE:-/opt/univpn/secret.env}:/run/secrets/univpn.env:ro
+      - univpn-run:/run/univpn
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  bo-vpn-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: bo-vpn-worker:latest
+    container_name: bo-vpn-worker
+    depends_on:
+      - bo-vpn-runner
+    environment:
+      BO_VPN_WORKER_HOST: "0.0.0.0"
+      BO_VPN_WORKER_PORT: "8000"
+      BO_VPN_WORKER_AUTH_TOKEN: "${BO_VPN_WORKER_AUTH_TOKEN:-dev-token}"
+      BO_VPN_DEFAULT_RUNNER_MODE: "container_namespace"
+      BO_VPN_RUNNER_URL: "http://univpn-service:8091"
+      BO_VPN_VEHICLE_INVENTORY_PATH: "/app/config/vehicles.csv"
+      BO_VPN_AUDIT_LOG_PATH: "/app/logs/audit.jsonl"
+    ports:
+      - "127.0.0.1:${BO_VPN_WORKER_PORT:-8000}:8000"
+    volumes:
+      - ./config:/app/config:ro
+      - ./logs:/app/logs
+    networks:
+      - bo-vpn-internal
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  vpn-tcp-proxy:
+    build:
+      context: .
+      dockerfile: Dockerfile.runner
+    image: bo-vpn-runner:latest
+    container_name: bo-vpn-tcp-proxy
+    network_mode: "service:univpn-service"
+    depends_on:
+      - univpn-service
+      - bo-vpn-runner
+    command:
+      - python
+      - -m
+      - bo_vpn_agent.tcp_proxy
+    environment:
+      VPN_TCP_PROXY_HOST: "0.0.0.0"
+      VPN_TCP_PROXY_PORT: "18080"
+      LOG_LEVEL: "${VPN_TCP_PROXY_LOG_LEVEL:-INFO}"
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  bo-vpn-internal:
+    name: bo-vpn-internal
+    driver: bridge
+    attachable: true
+
+volumes:
+  univpn-run:

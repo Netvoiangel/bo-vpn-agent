@@ -6,6 +6,8 @@ The worker is intentionally separated from the Telegram bot. The bot owns UI, ve
 
 Current detailed implementation status is tracked in [docs/technical_spec_status.md](docs/technical_spec_status.md).
 
+Operator and bot-integration usage instructions are in [docs/worker_usage.md](docs/worker_usage.md).
+
 ## Current implementation status
 
 Implemented:
@@ -359,6 +361,18 @@ The worker container does not mount `/var/run/docker.sock`.
 
 It keeps the worker and bot away from Docker socket access. The runner container uses `network_mode: "service:univpn-service"` and calls the new `container_namespace` executor.
 
+## Standalone UniVPN Service (No Telegram Bots)
+
+For serving multiple independent Docker applications via REST API or TCP proxy without running Telegram bots, use `docker-compose.vpn.yml`.
+It runs:
+- `univpn-service` (UniVPN daemon in isolated network namespace);
+- `bo-vpn-runner` (runner-daemon inside UniVPN namespace);
+- `bo-vpn-worker` (HTTP API bound strictly to `127.0.0.1:8000`);
+- `vpn-tcp-proxy` (TCP gateway to `172.26.0.0/15` on `127.0.0.1:18080`).
+
+See [docs/standalone_vpn_deployment.md](docs/standalone_vpn_deployment.md) for step-by-step setup, configuration (`vpn.env.example`), and verification commands.
+
+
 The compose file is aligned to the inspected stand `univpn-service` and has passed a server smoke-test for `runner_mode=container_namespace`, `vpn.mode=container_secret` and `operation=vehicle_reachability`. It uses these host paths:
 
 - `/home/timur/univpn/profile` -> `/home/vpn/UniVPN`
@@ -547,6 +561,22 @@ curl -X POST \
 - VPN password and full username are not returned by API responses or audit log.
 - Request bodies are not written to access logs.
 - Audit log records task metadata, operation, result state, error code, duration, runner mode, risk and cleanup flag.
+
+## Telegram audio bot
+
+The audio bot supports inline branch, vehicle, channel and volume controls,
+persisted per-user settings, forwarded Telegram music, voice messages and audio
+documents. Salon is the default output. See [audio bot usage](docs/audio_bot_usage.md)
+for supported formats, controls and bot-only deployment.
+
+## VPN doctor
+
+Use `scripts/vpn_doctor.py status` for a read-only check or
+`scripts/vpn_doctor.py repair --canary-ip <vehicle-ip>` to restore the current
+container VPN path. `scripts/vpn_ssh.sh` runs only a cached, read-only preflight
+before connecting; repair is an explicit supervisor/operator action. Logs are
+bounded and secret-filtered. See
+[VPN doctor](docs/vpn_doctor.md) for behavior and configuration.
 
 ## Test
 
