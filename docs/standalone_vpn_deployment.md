@@ -4,21 +4,27 @@
 
 ---
 
-## 1. Блокирующая зависимость: образ UniVPN
+## 1. Сборка Docker-образа UniVPN
 
-> [!CAUTION]
-> Образ `local/univpn:10781.16.0.0730` является **проприетарным** и не может быть собран из открытых исходных кодов репозитория.
-> В репозитории отсутствуют бинарные файлы UniVPNCS и дистрибутив клиента.
+> [!NOTE]
+> Образ `local/univpn:10781.16.0.0730` собирается воспроизводимо из официального пакета разработчика (Shenzhen Leagsoft Technology Co., Ltd. / 联软科技) через [Dockerfile.univpn](file:///Users/w6itec6apel/Github/bo-vpn-agent/Dockerfile.univpn) с автоматической валидацией криптографических контрольных сумм:
+> * Пакет: `https://download.leagsoft.com/download/UniVPN/linux/univpn-linux-64-10781.16.0.0730.zip`
+> * SHA-256 zip: `baa5c5f94119a44c068b531465be62eebf5c5f167eab103706ec6391d547aa68`
+> * MD5 инсталлятора `.run`: `99b8b779721114734767ced278455af9` (совпадает с [документацией вендора](https://www.leagsoft.com/doc/article/103197.html))
 
-Перед запуском на новом сервере (AlmaLinux) образ необходимо импортировать одним из способов:
-1. Загрузить предварительно сохранённый tar-архив с резервной копии:
-   ```bash
-   docker load -i univpn-10781.16.0.0730.tar
-   ```
-2. Либо собрать образ из официального RPM/инсталлятора UniVPN от поставщика, назначив тег:
-   ```bash
-   docker tag <built-image> local/univpn:10781.16.0.0730
-   ```
+Сборка образа выполняется автоматически при вызове Compose:
+```bash
+docker compose -f docker-compose.vpn.yml build univpn-service
+```
+Либо вручную скриптом:
+```bash
+./scripts/build_univpn_image.sh
+```
+
+При необходимости образ также можно загрузить из архива:
+```bash
+docker load -i univpn-10781.16.0.0730.tar
+```
 
 ---
 

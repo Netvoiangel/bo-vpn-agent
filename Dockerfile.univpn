@@ -1,0 +1,50 @@
+# ==============================================================================
+# Reproducible build for UniVPN Client v10781.16.0.0730
+# Official Vendor: Shenzhen Leagsoft Technology Co., Ltd. (联软科技)
+# Vendor Documentation: https://www.leagsoft.com/doc/article/103197.html
+# ==============================================================================
+
+FROM ubuntu:22.04
+
+ARG CLIENT_VERSION=10781.16.0.0730
+ARG PACKAGE_URL="https://download.leagsoft.com/download/UniVPN/linux/univpn-linux-64-10781.16.0.0730.zip"
+ARG PACKAGE_SHA256="baa5c5f94119a44c068b531465be62eebf5c5f167eab103706ec6391d547aa68"
+ARG INSTALLER_MD5="99b8b779721114734767ced278455af9"
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8
+
+# Install runtime dependencies required for headless client execution and routing
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        unzip \
+        iproute2 \
+        iptables \
+        net-tools \
+        procps \
+        bsdextrautils \
+        kmod \
+    && rm -rf /var/lib/apt/lists/*
+
+# Download official vendor package, verify cryptographic checksums, and install
+RUN mkdir -p /tmp/univpn-install \
+    && cd /tmp/univpn-install \
+    && echo "Downloading UniVPN package from ${PACKAGE_URL}..." \
+    && curl -fsSL -o univpn.zip "${PACKAGE_URL}" \
+    && echo "${PACKAGE_SHA256}  univpn.zip" | sha256sum -c - \
+    && unzip -q univpn.zip \
+    && RUN_FILE=$(ls univpn-linux-64-*/univpn-linux-64-*.run univpn-linux-64-*.run 2>/dev/null | head -n 1) \
+    && test -n "$RUN_FILE" \
+    && chmod +x "$RUN_FILE" \
+    && echo "${INSTALLER_MD5}  $RUN_FILE" | md5sum -c - \
+    && echo "Executing vendor installer..." \
+    && "$RUN_FILE" \
+    && cd / \
+    && rm -rf /tmp/univpn-install \
+    && mkdir -p /var/log/univpn /run/univpn /home/vpn/UniVPN
+
+WORKDIR /usr/local/UniVPN
+
+CMD ["/usr/local/UniVPN/serviceclient/UniVPNCS"]

@@ -1,5 +1,8 @@
 services:
   univpn-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.univpn
     image: ${UNIVPN_IMAGE:-local/univpn:10781.16.0.0730}
     container_name: univpn-service
     cap_add:
