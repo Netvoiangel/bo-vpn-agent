@@ -68,6 +68,11 @@ services:
       - /home/timur/univpn/secret.env:/run/secrets/univpn.env:ro
       - univpn-run:/run/univpn
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   bo-vpn-worker:
     build:
@@ -92,6 +97,11 @@ services:
     networks:
       - bo-vpn-internal
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   vpn-tcp-proxy:
     profiles:
@@ -111,6 +121,11 @@ services:
     volumes:
       - ./bo_vpn_agent/tcp_proxy.py:/app/bo_vpn_agent/tcp_proxy.py:ro
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   audio-bot:
     profiles:
