@@ -9,7 +9,7 @@
 > [!NOTE]
 > Образ `local/univpn:10781.16.0.0730` собирается воспроизводимо из официального пакета разработчика (Shenzhen Leagsoft Technology Co., Ltd. / 联软科技) через [Dockerfile.univpn](file:///Users/w6itec6apel/Github/bo-vpn-agent/Dockerfile.univpn) с автоматической валидацией криптографических контрольных сумм:
 > * Пакет: `https://download.leagsoft.com/download/UniVPN/linux/univpn-linux-64-10781.16.0.0730.zip`
-> * SHA-256 zip: `baa5c5f94119a44c068b531465be62eebf5c5f167eab103706ec6391d547aa68`
+> * SHA-256 zip: `f230bcdf198d5c3398f555b7bcb157f5f35cc7b95567e9d0b08967bcc1270c17`
 > * MD5 инсталлятора `.run`: `99b8b779721114734767ced278455af9` (совпадает с [документацией вендора](https://www.leagsoft.com/doc/article/103197.html))
 
 Сборка образа выполняется автоматически при вызове Compose:
