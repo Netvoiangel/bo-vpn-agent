@@ -57,7 +57,7 @@ class RunnerDaemonConfig:
     nsenter_bin: str = "/usr/bin/nsenter"
     docker_bin: str = "/usr/bin/docker"
     ssh_bin: str = "/usr/bin/ssh"
-    ssh_key_path: Path = Path("/home/timur/univpn/rsa.key")
+    ssh_key_path: Path = Path("/run/keys/rsa.key")
     default_ssh_user: str = "root"
     nsenter_timeout_sec: int = 8
     command_output_max_bytes: int = 64 * 1024
@@ -70,6 +70,7 @@ class RunnerDaemonConfig:
     univpn_interface: str = "cnem_vnic"
     univpn_login_mode: str = "container_secret"
     univpn_secret_path: Path = Path("/run/secrets/univpn.env")
+    univpn_profile_menu_index: str = "3"
     univpn_disconnect_sequence: str | None = None
     univpn_login_after_profile_delay_sec: float = 2.0
     univpn_login_after_connect_delay_sec: float = 4.0
@@ -89,7 +90,7 @@ class RunnerDaemonConfig:
             nsenter_bin=os.getenv("BO_VPN_NSENTER_BIN", "/usr/bin/nsenter"),
             docker_bin=os.getenv("BO_VPN_DOCKER_BIN", "/usr/bin/docker"),
             ssh_bin=os.getenv("BO_VPN_SSH_BIN", "/usr/bin/ssh"),
-            ssh_key_path=Path(os.getenv("BO_VPN_SSH_KEY_PATH", "/home/timur/univpn/rsa.key")),
+            ssh_key_path=Path(os.getenv("BO_VPN_SSH_KEY_PATH", "/run/keys/rsa.key")),
             default_ssh_user=os.getenv("BO_VPN_DEFAULT_SSH_USER", "root"),
             nsenter_timeout_sec=int(os.getenv("BO_VPN_NSENTER_TIMEOUT_SEC", "8")),
             command_output_max_bytes=int(os.getenv("BO_VPN_COMMAND_OUTPUT_MAX_BYTES", str(64 * 1024))),
@@ -102,6 +103,7 @@ class RunnerDaemonConfig:
             univpn_interface=os.getenv("BO_VPN_UNIVPN_INTERFACE", "cnem_vnic"),
             univpn_login_mode=os.getenv("BO_VPN_UNIVPN_LOGIN_MODE", "container_secret"),
             univpn_secret_path=Path(os.getenv("BO_VPN_UNIVPN_SECRET_PATH", "/run/secrets/univpn.env")),
+            univpn_profile_menu_index=os.getenv("BO_VPN_UNIVPN_PROFILE_MENU_INDEX", "3"),
             univpn_disconnect_sequence=os.getenv("BO_VPN_UNIVPN_DISCONNECT_SEQUENCE"),
             univpn_login_after_profile_delay_sec=float(os.getenv("BO_VPN_UNIVPN_LOGIN_AFTER_PROFILE_DELAY_SEC", "2")),
             univpn_login_after_connect_delay_sec=float(os.getenv("BO_VPN_UNIVPN_LOGIN_AFTER_CONNECT_DELAY_SEC", "4")),

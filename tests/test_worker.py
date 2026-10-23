@@ -270,6 +270,7 @@ class WorkerServiceTests(unittest.TestCase):
             "BO_VPN_UNIVPN_LOGIN_AFTER_CONNECT_DELAY_SEC": "2.5",
             "BO_VPN_UNIVPN_LOGIN_AFTER_USERNAME_DELAY_SEC": "3.5",
             "BO_VPN_UNIVPN_POST_LOGIN_WAIT_SEC": "4.5",
+            "BO_VPN_UNIVPN_PROFILE_MENU_INDEX": "4",
         }
         previous = {key: os.environ.get(key) for key in keys}
         try:
@@ -291,6 +292,7 @@ class WorkerServiceTests(unittest.TestCase):
         self.assertEqual(config.univpn_interface, "cnem_vnic")
         self.assertEqual(config.univpn_login_mode, "container_secret")
         self.assertEqual(config.univpn_secret_path, Path("/run/secrets/custom.env"))
+        self.assertEqual(config.univpn_profile_menu_index, "4")
         self.assertEqual(config.univpn_disconnect_sequence, "q")
         self.assertEqual(config.univpn_login_after_profile_delay_sec, 1.5)
         self.assertEqual(config.univpn_login_after_connect_delay_sec, 2.5)
@@ -302,6 +304,8 @@ class WorkerServiceTests(unittest.TestCase):
 
         self.assertEqual(config.univpn_control_path, Path("/run/univpn/univpn.in"))
         self.assertEqual(config.univpn_secret_path, Path("/run/secrets/univpn.env"))
+        self.assertEqual(config.univpn_profile_menu_index, "3")
+        self.assertEqual(config.ssh_key_path, Path("/run/keys/rsa.key"))
         self.assertEqual(config.univpn_login_after_profile_delay_sec, 2)
         self.assertEqual(config.univpn_login_after_connect_delay_sec, 4)
         self.assertEqual(config.univpn_login_after_username_delay_sec, 2)
@@ -727,6 +731,20 @@ class WorkerServiceTests(unittest.TestCase):
             self.assertEqual(result["state"], "failed")
             self.assertEqual(result["error_code"], "ssh_failed")
 
+    def test_existing_container_basic_status_missing_ssh_key_fails_cleanly(self) -> None:
+        with TemporaryDirectory() as raw_tmp:
+            executor = FakeCommandExecutor([command_result(stdout="1234\n"), *_preflight_success()])
+            service = RunnerDaemonService(
+                _runner_config(Path(raw_tmp), ssh_key_path=Path(raw_tmp) / "nonexistent.key"),
+                command_executor=executor,
+            )
+            _, created = service.create_job(_runner_job_payload(operation="basic_status"))
+            result = wait_for_job_terminal(service, created["job_id"])
+
+            self.assertEqual(result["state"], "failed")
+            self.assertEqual(result["error_code"], "ssh_failed")
+            self.assertIn("SSH-ключ не найден", result["message"])
+
     def test_container_namespace_runner_does_not_call_docker_or_nsenter(self) -> None:
         with TemporaryDirectory() as raw_tmp:
             executor = FakeCommandExecutor(
@@ -786,6 +804,20 @@ class WorkerServiceTests(unittest.TestCase):
             self.assertEqual(executor.calls[2][0], "/usr/bin/ssh")
             self.assertNotIn("/usr/bin/nsenter", executor.calls[2])
 
+    def test_container_namespace_basic_status_missing_ssh_key_fails_cleanly(self) -> None:
+        with TemporaryDirectory() as raw_tmp:
+            executor = FakeCommandExecutor(_container_preflight_success())
+            service = RunnerDaemonService(
+                _container_runner_config(Path(raw_tmp), ssh_key_path=Path(raw_tmp) / "nonexistent.key"),
+                command_executor=executor,
+            )
+            _, created = service.create_job(_runner_job_payload(operation="basic_status", runner_mode="container_namespace"))
+            result = wait_for_job_terminal(service, created["job_id"])
+
+            self.assertEqual(result["state"], "failed")
+            self.assertEqual(result["error_code"], "ssh_failed")
+            self.assertIn("SSH-ключ не найден", result["message"])
+
     def test_container_namespace_managed_login_writes_sequence_without_api_secret_leak(self) -> None:
         with TemporaryDirectory() as raw_tmp:
             tmp_path = Path(raw_tmp)
@@ -820,6 +852,39 @@ class WorkerServiceTests(unittest.TestCase):
             self.assertEqual(control_path.read_text(encoding="utf-8"), "3\n1\nstand-user\nstand-password\n")
             self.assertNotIn("stand-password", body)
             self.assertNotIn("stand-user", body)
+
+    def test_container_namespace_managed_login_uses_custom_profile_menu_index(self) -> None:
+        with TemporaryDirectory() as raw_tmp:
+            tmp_path = Path(raw_tmp)
+            secret_path = tmp_path / "univpn.env"
+            control_path = tmp_path / "univpn.in"
+            secret_path.write_text("VPN_USERNAME=stand-user\nVPN_PASSWORD=stand-password\n", encoding="utf-8")
+            executor = FakeCommandExecutor(
+                [
+                    command_result(stderr='Device "cnem_vnic" does not exist.', returncode=1),
+                    *_container_preflight_success(),
+                    command_result(stdout='{"22":"open","443":"closed","80":"closed"}\n'),
+                ]
+            )
+            service = RunnerDaemonService(
+                _container_runner_config(
+                    tmp_path,
+                    manage_vpn_session=True,
+                    univpn_secret_path=secret_path,
+                    univpn_control_path=control_path,
+                    univpn_login_timeout_sec=0,
+                    univpn_connect_poll_interval_sec=0,
+                    univpn_profile_menu_index="5",
+                ),
+                command_executor=executor,
+            )
+            _, created = service.create_job(
+                _runner_job_payload(operation="vehicle_reachability", runner_mode="container_namespace", vpn_mode="container_secret")
+            )
+            result = wait_for_job_terminal(service, created["job_id"])
+
+            self.assertEqual(result["state"], "finished")
+            self.assertEqual(control_path.read_text(encoding="utf-8"), "5\n1\nstand-user\nstand-password\n")
 
     def test_container_namespace_managed_login_sleeps_between_steps(self) -> None:
         with TemporaryDirectory() as raw_tmp:
@@ -1080,7 +1145,10 @@ class WorkerServiceTests(unittest.TestCase):
         self.assertIn("console session", design)
         self.assertIn("/dev/null", design)
 
-def _runner_config(tmp_path: Path) -> RunnerDaemonConfig:
+def _runner_config(tmp_path: Path, ssh_key_path: Path | None = None) -> RunnerDaemonConfig:
+    key_path = ssh_key_path or (tmp_path / "rsa.key")
+    if ssh_key_path is None and not key_path.exists():
+        key_path.touch()
     return RunnerDaemonConfig(
         artifact_dir=tmp_path / "runner-artifacts",
         artifact_ttl_hours=24,
@@ -1088,7 +1156,7 @@ def _runner_config(tmp_path: Path) -> RunnerDaemonConfig:
         nsenter_bin="/usr/bin/nsenter",
         docker_bin="/usr/bin/docker",
         ssh_bin="/usr/bin/ssh",
-        ssh_key_path=Path("/home/timur/univpn/rsa.key"),
+        ssh_key_path=key_path,
         default_ssh_user="root",
         nsenter_timeout_sec=8,
         command_output_max_bytes=64 * 1024,
@@ -1108,12 +1176,17 @@ def _container_runner_config(
     univpn_login_after_connect_delay_sec: float = 0,
     univpn_login_after_username_delay_sec: float = 0,
     univpn_post_login_wait_sec: float = 0,
+    univpn_profile_menu_index: str = "3",
+    ssh_key_path: Path | None = None,
 ) -> RunnerDaemonConfig:
+    key_path = ssh_key_path or (tmp_path / "rsa.key")
+    if ssh_key_path is None and not key_path.exists():
+        key_path.touch()
     return RunnerDaemonConfig(
         artifact_dir=tmp_path / "runner-artifacts",
         artifact_ttl_hours=24,
         ssh_bin="/usr/bin/ssh",
-        ssh_key_path=Path("/run/keys/rsa.key"),
+        ssh_key_path=key_path,
         default_ssh_user="root",
         nsenter_timeout_sec=8,
         command_output_max_bytes=64 * 1024,
@@ -1128,6 +1201,7 @@ def _container_runner_config(
         univpn_login_after_connect_delay_sec=univpn_login_after_connect_delay_sec,
         univpn_login_after_username_delay_sec=univpn_login_after_username_delay_sec,
         univpn_post_login_wait_sec=univpn_post_login_wait_sec,
+        univpn_profile_menu_index=univpn_profile_menu_index,
     )
 
 

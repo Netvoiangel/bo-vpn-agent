@@ -94,6 +94,8 @@ class ExistingContainerExecutor:
         )
 
     def _basic_status(self, container_pid: str, task: Task) -> RunnerResult:
+        if not self.config.ssh_key_path.is_file():
+            raise RunnerFailure("ssh_failed", f"SSH-ключ не найден: {self.config.ssh_key_path}")
         ssh_command = "hostname; uptime; date -Is; df -h /; free -m"
         result = self._nsenter(
             container_pid,

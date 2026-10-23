@@ -23,7 +23,6 @@ services:
         tail -f /run/univpn/univpn.in | script -qfec "su - vpn -c /usr/local/UniVPN/serviceclient/UniVPNCS" /dev/null >/dev/null 2>&1
     volumes:
       - ${UNIVPN_PROFILE_DIR:-/opt/univpn/profile}:/home/vpn/UniVPN
-      - ${UNIVPN_SECRET_FILE:-/opt/univpn/secret.env}:/run/secrets/univpn.env:ro
       - ${UNIVPN_LOGS_DIR:-/opt/univpn/logs}:/var/log/univpn
       - univpn-run:/run/univpn
     networks:
@@ -62,13 +61,14 @@ services:
       BO_VPN_UNIVPN_INTERFACE: "cnem_vnic"
       BO_VPN_UNIVPN_LOGIN_MODE: "container_secret"
       BO_VPN_UNIVPN_SECRET_PATH: "/run/secrets/univpn.env"
+      BO_VPN_UNIVPN_PROFILE_MENU_INDEX: "${BO_VPN_UNIVPN_PROFILE_MENU_INDEX:-3}"
       BO_VPN_SSH_BIN: "/usr/bin/ssh"
       BO_VPN_SSH_KEY_PATH: "/run/keys/rsa.key"
       BO_VPN_DEFAULT_SSH_USER: "${BO_VPN_DEFAULT_SSH_USER:-root}"
       BO_VPN_NSENTER_TIMEOUT_SEC: "8"
       BO_VPN_COMMAND_OUTPUT_MAX_BYTES: "65536"
     volumes:
-      - ${BO_VPN_SSH_KEY_PATH:-/opt/univpn/rsa.key}:/run/keys/rsa.key:ro
+      - ${BO_VPN_SSH_KEYS_DIR:-/opt/univpn/keys}:/run/keys:ro
       - ${UNIVPN_SECRET_FILE:-/opt/univpn/secret.env}:/run/secrets/univpn.env:ro
       - univpn-run:/run/univpn
     restart: unless-stopped

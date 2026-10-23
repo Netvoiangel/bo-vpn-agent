@@ -117,8 +117,8 @@ class ContainerNamespaceExecutor:
         username, password = self._credentials(vpn)
         LOGGER.info("univpn login: control_path_exists=%s", self.config.univpn_control_path.exists())
         try:
-            self._write_control_line("3")
-            LOGGER.info("univpn login: profile selected")
+            self._write_control_line(str(self.config.univpn_profile_menu_index))
+            LOGGER.info("univpn login: profile selected index=%s", self.config.univpn_profile_menu_index)
             _sleep(self.config.univpn_login_after_profile_delay_sec)
 
             self._write_control_line("1")
@@ -178,6 +178,8 @@ class ContainerNamespaceExecutor:
         )
 
     def _basic_status(self, task: Task) -> RunnerResult:
+        if not self.config.ssh_key_path.is_file():
+            raise RunnerFailure("ssh_failed", f"SSH-ключ не найден: {self.config.ssh_key_path}")
         ssh_command = "hostname; uptime; date -Is; df -h /; free -m"
         result = self.command_executor.run(
             [
